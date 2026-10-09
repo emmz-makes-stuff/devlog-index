@@ -1,4 +1,5 @@
 const std = @import("std");
+const bench = @import("bench.zig");
 
 const usage =
     \\Usage: devlog-index <command> [options]
@@ -30,6 +31,18 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (std.mem.eql(u8, args[1], "bench-cold")) {
+        bench.run(init, args[2..], out) catch |err| switch (err) {
+            error.Usage => {
+                std.debug.print("usage: devlog-index bench-cold [--setup] <db>\n", .{});
+                std.process.exit(2);
+            },
+            else => return err,
+        };
+        try out.flush();
+        return;
+    }
+
     std.debug.print("devlog-index: unknown command '{s}'\n\n{s}", .{ args[1], usage });
     std.process.exit(2);
 }
@@ -40,4 +53,8 @@ fn isHelp(arg: []const u8) bool {
 
 test {
     _ = @import("sqlite.zig");
+    _ = @import("model.zig");
+    _ = @import("model_url.zig");
+    _ = @import("download.zig");
+    _ = @import("embed.zig");
 }

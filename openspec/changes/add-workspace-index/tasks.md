@@ -8,8 +8,8 @@
 
 ## 2. Embedding engine and the latency budget
 
-- [ ] 2.1 Adapt memlite's `model`, `model_url`, `download` and `embed` modules with provenance headers; pin `nomic-embed-text-v1.5` Q5_K_M and the model cache at `~/.devlog-index/models/`; apply `search_document:` / `search_query:` prefixes with title-first truncation (D2); verify unit tests for prefixing and truncation pass, and model-gated tests (with `DEVLOG_INDEX_TEST_MODEL`) produce a unit-length vector of the model's dimension
-- [ ] 2.2 Add a hidden `bench-cold` command that loads the model, embeds one query and scores it against 3,200 random vectors in a `vec0` table; verify on this machine that a fresh process completes in < 1 s and record the measured times in a devlog note (stop and raise it with Emmz if the budget is missed)
+- [x] 2.1 Adapt memlite's `model`, `model_url`, `download` and `embed` modules with provenance headers; pin `nomic-embed-text-v1.5` Q5_K_M and the model cache at `~/.devlog-index/models/`; apply `search_document:` / `search_query:` prefixes with title-first truncation (D2); verify unit tests for prefixing and truncation pass, and model-gated tests (with `DEVLOG_INDEX_TEST_MODEL`) produce a unit-length vector of the model's dimension
+- [x] 2.2 Add a hidden `bench-cold` command that loads the model, embeds one query and scores it against 3,200 random vectors in a `vec0` table; verify on this machine that a fresh process completes in < 1 s and record the measured times in a devlog note (stop and raise it with Emmz if the budget is missed)
 
 ## 3. Workspace config
 
