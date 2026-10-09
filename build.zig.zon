@@ -1,0 +1,19 @@
+.{
+    .name = .devlog_index,
+    .version = "0.0.0",
+    .fingerprint = 0xcc51c64f06a6915a, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        // Same pinned commit as memlite (ADR-0001); bump both together.
+        .llama_cpp_zig = .{
+            .url = "git+https://github.com/daemonicai/llama.cpp.zig#606ed16db5e7b5faed634f6fee2c5943b19177ea",
+            .hash = "llama_cpp_zig-0.0.1-5p8VaH1OAQBwsMeVOZGihPqG8RpcyRTcKqJ8rploKwip",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "third_party",
+    },
+}

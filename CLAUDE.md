@@ -10,7 +10,8 @@ Notes go in the change's `devlog/` folder via `/emmz:devlog`.
 Run through the `Makefile`; a gate passed only if you saw its `LABEL_EXIT:0`. Quote exit lines, never
 paraphrase them.
 
-- `make build` — `zig build`.
+- `make build` — `zig build`, with `ZIG_LIBC` pointing at the macOS 26 SDK (Zig 0.16.0 can't build
+  libc++ against SDK 27; see `docs/dependencies.md`). Run Zig through `make`, not bare.
 - `make test` — `zig build test --summary all` (hermetic; model-dependent tests skip unless
   `DEVLOG_INDEX_TEST_MODEL` points at a GGUF).
 - `make format` — `zig fmt --check src build.zig`.

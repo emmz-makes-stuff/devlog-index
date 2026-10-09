@@ -6,14 +6,31 @@
 
 SHELL := /bin/bash
 
+# Zig 0.16.0's bundled libc++ cannot compile against the macOS 27 SDK headers
+# (`INFINITY` comes from `<float.h>` via `__need_infinity_nan`, which its headers
+# lack). Point Zig at the newest SDK 26.x from the Command Line Tools through a
+# libc file instead. Drop this once a Zig release builds against SDK 27.
+SDK26 := $(shell ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX26.*.sdk 2>/dev/null | sort -V | tail -1)
+LIBC_FILE := $(CURDIR)/.zig-cache/libc-sdk26.txt
+ifneq ($(SDK26),)
+export ZIG_LIBC := $(LIBC_FILE)
+endif
+
 CHANGES := $(notdir $(patsubst %/,%,$(filter-out %/archive/,$(wildcard openspec/changes/*/))))
 
-.PHONY: build test format validate changes gates deps
+.PHONY: build test format validate changes gates deps libc
 
-build:
+# Writes the SDK 26 libc file (see SDK26 above); a no-op without that SDK, which
+# `make deps` reports.
+libc:
+	@if [ -n "$(SDK26)" ]; then mkdir -p "$(dir $(LIBC_FILE))"; \
+		printf 'include_dir=%s\nsys_include_dir=%s\ncrt_dir=\nmsvc_lib_dir=\nkernel32_lib_dir=\ngcc_dir=\n' \
+			"$(SDK26)/usr/include" "$(SDK26)/usr/include" > "$(LIBC_FILE)"; fi
+
+build: libc
 	@zig build; code=$$?; echo "BUILD_EXIT:$$code"; exit $$code
 
-test:
+test: libc
 	@zig build test --summary all; code=$$?; echo "TEST_EXIT:$$code"; exit $$code
 
 format:
@@ -45,4 +62,5 @@ deps:
 	xcrun --show-sdk-path >/dev/null 2>&1 || { echo "MISSING macOS SDK — xcode-select --install"; fail=1; }; \
 	openspec --version >/dev/null 2>&1 || { echo "MISSING openspec — npm i -g @fission-ai/openspec"; fail=1; }; \
 	git --version >/dev/null 2>&1 || { echo "MISSING git — brew install git"; fail=1; }; \
+	ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX26.*.sdk >/dev/null 2>&1 || { echo "MISSING macOS SDK 26.x — install Command Line Tools for Xcode 26 from https://developer.apple.com/download/all/"; fail=1; }; \
 	echo "DEPS_EXIT:$$fail"; exit $$fail

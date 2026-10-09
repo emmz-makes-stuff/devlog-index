@@ -2,9 +2,9 @@
 
 ## 1. Scaffold and vendored stack
 
-- [ ] 1.1 Create `build.zig` / `build.zig.zon` (Zig 0.16, executable `devlog-index`, `test` step) depending on the same pinned `daemonicai/llama.cpp.zig` commit as memlite; verify `zig build` succeeds and `zig-out/bin/devlog-index --help` prints a usage line
-- [ ] 1.2 Copy memlite's `third_party/sqlite` and `third_party/sqlite-vec` (with its musl patch) and `VERSIONS.md`, compile them into the build, and add a test that opens an in-memory DB, creates an FTS5 table and a `vec0` table; verify `zig build test --summary all` passes
-- [ ] 1.3 Add `.gitignore` (`zig-out/`, `.zig-cache/`) and a stub `README.md` naming the commands; verify `zig fmt --check src build.zig` exits 0
+- [x] 1.1 Create `build.zig` / `build.zig.zon` (Zig 0.16, executable `devlog-index`, `test` step) depending on the same pinned `daemonicai/llama.cpp.zig` commit as memlite; verify `zig build` succeeds and `zig-out/bin/devlog-index --help` prints a usage line
+- [x] 1.2 Copy memlite's `third_party/sqlite` and `third_party/sqlite-vec` (with its musl patch) and `VERSIONS.md`, compile them into the build, and add a test that opens an in-memory DB, creates an FTS5 table and a `vec0` table; verify `zig build test --summary all` passes
+- [x] 1.3 Add `.gitignore` (`zig-out/`, `.zig-cache/`) and a stub `README.md` naming the commands; verify `zig fmt --check src build.zig` exits 0
 
 ## 2. Embedding engine and the latency budget
 

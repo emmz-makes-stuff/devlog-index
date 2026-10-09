@@ -127,7 +127,9 @@ used. The follow-up skill change makes `update` routine at section done and pick
   question still measures paraphrase handling (retrieval-eval, Known misses).
 
 ### D11. Gate commands
-Single stack; run from the repo root. All are non-interactive and exit non-zero on failure.
+Single stack; run from the repo root. All are non-interactive and exit non-zero on failure. On macOS,
+`make` runs build and test with `ZIG_LIBC` pointing at SDK 26.x headers: Zig 0.16.0's bundled libc++
+fails against SDK 27 (decided with Emmz on 2026-10-09; `docs/dependencies.md`).
 
 - build: `zig build`
 - test: `zig build test --summary all`
