@@ -13,8 +13,8 @@
 
 ## 3. Workspace config
 
-- [ ] 3.1 Implement config parsing (`devlog-index.json`: name, members) and walk-up resolution with nearest-wins and the "no workspace" error naming `init` (workspace-config spec); verify unit tests cover nested configs, missing members and no-config
-- [ ] 3.2 Implement `init <name> <member>…` refusing to overwrite; verify an integration test creates a config in a temp dir and a second `init` fails naming the file unchanged
+- [x] 3.1 Implement config parsing (`devlog-index.json`: name, members) and walk-up resolution with nearest-wins and the "no workspace" error naming `init` (workspace-config spec); verify unit tests cover nested configs, missing members and no-config
+- [x] 3.2 Implement `init <name> <member>…` refusing to overwrite; verify an integration test creates a config in a temp dir and a second `init` fails naming the file unchanged
 
 ## 4. Fixture workspace, discovery and chunking
 

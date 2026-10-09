@@ -1,5 +1,6 @@
 const std = @import("std");
 const bench = @import("bench.zig");
+const workspace = @import("workspace.zig");
 
 const usage =
     \\Usage: devlog-index <command> [options]
@@ -31,6 +32,28 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (std.mem.eql(u8, args[1], "init")) {
+        if (args.len < 4) {
+            std.debug.print("usage: devlog-index init <name> <member>...\n", .{});
+            std.process.exit(2);
+        }
+        var stderr_buf: [1024]u8 = undefined;
+        var stderr_writer: std.Io.File.Writer = .init(.stderr(), init.io, &stderr_buf);
+        const root = try std.process.currentPathAlloc(init.io, arena);
+        var diag: workspace.Diag = .{};
+        workspace.init(arena, init.io, .cwd(), root, args[2], args[3..], &stderr_writer.interface, &diag) catch |err| {
+            stderr_writer.interface.flush() catch {};
+            switch (err) {
+                error.OutOfMemory => return err,
+                else => fatal(diag.message),
+            }
+        };
+        try stderr_writer.interface.flush();
+        try out.print("devlog-index: created {s}\n", .{workspace.config_basename});
+        try out.flush();
+        return;
+    }
+
     if (std.mem.eql(u8, args[1], "bench-cold")) {
         bench.run(init, args[2..], out) catch |err| switch (err) {
             error.Usage => {
@@ -47,6 +70,11 @@ pub fn main(init: std.process.Init) !void {
     std.process.exit(2);
 }
 
+fn fatal(message: []const u8) noreturn {
+    std.debug.print("devlog-index: {s}\n", .{message});
+    std.process.exit(1);
+}
+
 fn isHelp(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "help");
 }
@@ -57,4 +85,5 @@ test {
     _ = @import("model_url.zig");
     _ = @import("download.zig");
     _ = @import("embed.zig");
+    _ = @import("workspace.zig");
 }
