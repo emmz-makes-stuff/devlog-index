@@ -544,6 +544,8 @@ pub const ModelProvider = struct {
     model_path: [:0]const u8,
     /// Download from here when `model_path` is absent; null to never download.
     download_url: ?[]const u8,
+    /// `.document` for indexing, `.query` for a query (design D2 prefixes).
+    task: embed_mod.Task = .document,
     model: ?model_mod.Model = null,
     embedder: ?embed_mod.Embedder = null,
 
@@ -558,13 +560,25 @@ pub const ModelProvider = struct {
         };
     }
 
+    /// The cached pinned model, for a query: never downloads (that would
+    /// break the query latency budget); `get` fails with `ModelNotCached`.
+    pub fn cachedForQuery(arena: Allocator, gpa: Allocator, io: Io, home: []const u8) !ModelProvider {
+        var mp = try pinned(arena, gpa, io, home);
+        mp.download_url = null;
+        mp.task = .query;
+        return mp;
+    }
+
     pub fn provider(mp: *ModelProvider) Provider {
         return .{ .ptr = mp, .getFn = get };
     }
 
     fn get(ptr: *anyopaque) anyerror!Embedder {
         const mp: *ModelProvider = @ptrCast(@alignCast(ptr));
-        if (mp.download_url) |url| _ = try download.ensureCached(mp.gpa, mp.io, mp.model_path, url);
+        if (mp.download_url) |url|
+            _ = try download.ensureCached(mp.gpa, mp.io, mp.model_path, url)
+        else
+            Io.Dir.cwd().access(mp.io, mp.model_path, .{}) catch return error.ModelNotCached;
         model_mod.initBackend();
         errdefer model_mod.deinitBackend();
         mp.model = try model_mod.Model.loadFromFile(mp.model_path, .{ .quiet = true });
@@ -573,12 +587,12 @@ pub const ModelProvider = struct {
             mp.model = null;
         }
         mp.embedder = try embed_mod.Embedder.init(mp.model.?, true);
-        return .{ .ptr = mp, .dim = mp.embedder.?.dim, .embedFn = embedDocument };
+        return .{ .ptr = mp, .dim = mp.embedder.?.dim, .embedFn = embedText };
     }
 
-    fn embedDocument(ptr: *anyopaque, gpa: Allocator, text: []const u8) anyerror![]f32 {
+    fn embedText(ptr: *anyopaque, gpa: Allocator, text: []const u8) anyerror![]f32 {
         const mp: *ModelProvider = @ptrCast(@alignCast(ptr));
-        return mp.embedder.?.embed(gpa, .document, text);
+        return mp.embedder.?.embed(gpa, mp.task, text);
     }
 
     pub fn deinit(mp: *ModelProvider) void {

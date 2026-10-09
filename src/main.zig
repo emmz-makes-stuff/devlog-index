@@ -3,6 +3,7 @@ const bench = @import("bench.zig");
 const workspace = @import("workspace.zig");
 const update = @import("update.zig");
 const status = @import("status.zig");
+const query = @import("query.zig");
 const model_url = @import("model_url.zig");
 
 const usage =
@@ -115,6 +116,41 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (std.mem.eql(u8, args[1], "query")) {
+        const query_usage = "usage: devlog-index query [--json] [--k N] \"<text>\"\n";
+        var json = false;
+        var k: usize = query.default_k;
+        var words: std.ArrayList([]const u8) = .empty;
+        var i: usize = 2;
+        while (i < args.len) : (i += 1) {
+            const a = args[i];
+            if (std.mem.eql(u8, a, "--json")) {
+                json = true;
+            } else if (std.mem.eql(u8, a, "--k")) {
+                i += 1;
+                if (i == args.len) usageExit(query_usage);
+                k = std.fmt.parseInt(usize, args[i], 10) catch usageExit(query_usage);
+                if (k < 1 or k > query.max_k) usageExit(query_usage);
+            } else try words.append(arena, a);
+        }
+        const text = try std.mem.join(arena, " ", words.items);
+        if (std.mem.trim(u8, text, " \t").len == 0) usageExit(query_usage);
+
+        const ws = resolveWorkspace(init, arena);
+        const home = init.environ_map.get("HOME") orelse fatal("HOME is not set; it locates the model cache");
+        var mp = try update.ModelProvider.cachedForQuery(arena, init.gpa, init.io, home);
+        defer mp.deinit();
+        var diag: query.Diag = .{};
+        const o = query.run(arena, init.gpa, init.io, ws, .{ .text = text, .k = k, .provider = mp.provider() }, &diag) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => fatal(diag.message),
+        };
+        for (o.notices) |n| std.debug.print("devlog-index: notice: {s}\n", .{n});
+        if (json) try query.writeJson(o.results, out) else try query.writeText(o.results, out);
+        try out.flush();
+        return;
+    }
+
     if (std.mem.eql(u8, args[1], "bench-cold")) {
         bench.run(init, args[2..], out) catch |err| switch (err) {
             error.Usage => {
@@ -147,6 +183,11 @@ fn fatal(message: []const u8) noreturn {
     std.process.exit(1);
 }
 
+fn usageExit(usage_line: []const u8) noreturn {
+    std.debug.print("{s}", .{usage_line});
+    std.process.exit(2);
+}
+
 fn isHelp(arg: []const u8) bool {
     return std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "help");
 }
@@ -165,4 +206,5 @@ test {
     _ = @import("update.zig");
     _ = @import("freshness.zig");
     _ = @import("status.zig");
+    _ = @import("query.zig");
 }

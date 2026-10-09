@@ -34,11 +34,11 @@
 
 ## 7. Query
 
-- [ ] 7.1 Implement lexical retrieval via FTS5 `bm25()` with the query converted into a quoted OR of terms so punctuation cannot inject operators; verify unit tests including a query containing `"`, `*`, `-` and `:`
-- [ ] 7.2 Implement semantic retrieval (exhaustive cosine via `vec0`) and the union merge (D6): k per method (default 5, `--k`), dedupe, `methods` labels, ordering both-first then alternating; verify unit tests on a hand-built index with known vectors
-- [ ] 7.3 Implement result labelling and output: text by default, `--json` one object per line with all labels, text and thread; errors only on stderr; verify an integration test parses every stdout line of `--json` as JSON
-- [ ] 7.4 Implement degraded and empty states: missing index → non-zero naming `update`; model unavailable → lexical results plus an explicit "semantic search skipped: <reason>" notice; stale index notice with the changed-file count; verify integration tests for all three
-- [ ] 7.5 With the model, run the cold query on the real workspace; verify < 1 s wall-clock from process start (workspace-query Query latency) and record the timing in a devlog note
+- [x] 7.1 Implement lexical retrieval via FTS5 `bm25()` with the query converted into a quoted OR of terms so punctuation cannot inject operators; verify unit tests including a query containing `"`, `*`, `-` and `:`
+- [x] 7.2 Implement semantic retrieval (exhaustive cosine via `vec0`) and the union merge (D6): k per method (default 5, `--k`), dedupe, `methods` labels, ordering both-first then alternating; verify unit tests on a hand-built index with known vectors
+- [x] 7.3 Implement result labelling and output: text by default, `--json` one object per line with all labels, text and thread; errors only on stderr; verify an integration test parses every stdout line of `--json` as JSON
+- [x] 7.4 Implement degraded and empty states: missing index → non-zero naming `update`; model unavailable → lexical results plus an explicit "semantic search skipped: <reason>" notice; stale index notice with the changed-file count; verify integration tests for all three
+- [x] 7.5 With the model, run the cold query on the real workspace; verify < 1 s wall-clock from process start (workspace-query Query latency) and record the timing in a devlog note
 
 ## 8. Thread expansion
 
