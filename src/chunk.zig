@@ -73,18 +73,28 @@ pub fn kind(src: sources.Source) []const u8 {
     };
 }
 
+pub const Chunked = struct {
+    /// The note's `# ` title, or the context line for other artifacts; every
+    /// passage starts with it. Null for an untitled note.
+    title: ?[]const u8,
+    passages: []const []const u8,
+};
+
 /// Passages for one indexed file.
-pub fn passages(arena: Allocator, src: sources.Source, text: []const u8) Allocator.Error![]const []const u8 {
+pub fn passages(arena: Allocator, src: sources.Source, text: []const u8) Allocator.Error!Chunked {
     const c = src.class;
-    return switch (c.artifact) {
-        .note => chunkNote(arena, text),
-        .spec => chunkSpec(arena, try std.fmt.allocPrint(arena, "{s} spec", .{c.capability.?}), text),
-        .spec_delta => chunkSpec(arena, try std.fmt.allocPrint(arena, "{s} spec delta ({s})", .{ c.capability.?, c.change.? }), text),
-        .proposal, .design, .tasks => chunkSections(
-            arena,
-            try std.fmt.allocPrint(arena, "{s} {s}", .{ c.change.?, @tagName(c.artifact) }),
-            text,
-        ),
+    const prefix = switch (c.artifact) {
+        .note => return chunkNote(arena, text),
+        .spec => try std.fmt.allocPrint(arena, "{s} spec", .{c.capability.?}),
+        .spec_delta => try std.fmt.allocPrint(arena, "{s} spec delta ({s})", .{ c.capability.?, c.change.? }),
+        .proposal, .design, .tasks => try std.fmt.allocPrint(arena, "{s} {s}", .{ c.change.?, @tagName(c.artifact) }),
+    };
+    return .{
+        .title = prefix,
+        .passages = switch (c.artifact) {
+            .spec, .spec_delta => try chunkSpec(arena, prefix, text),
+            else => try chunkSections(arena, prefix, text),
+        },
     };
 }
 
@@ -131,7 +141,7 @@ fn wordCount(s: []const u8) usize {
     return n;
 }
 
-pub fn chunkNote(arena: Allocator, text: []const u8) Allocator.Error![]const []const u8 {
+pub fn chunkNote(arena: Allocator, text: []const u8) Allocator.Error!Chunked {
     var title: ?[]const u8 = null;
     var paragraphs: std.ArrayList([]const u8) = .empty;
     var para: std.ArrayList(u8) = .empty;
@@ -177,7 +187,7 @@ pub fn chunkNote(arena: Allocator, text: []const u8) Allocator.Error![]const []c
         }
     }
     if (group.items.len > 0) try out.append(arena, try withPrefix(arena, title, group.items));
-    return out.items;
+    return .{ .title = title, .passages = out.items };
 }
 
 fn flushParagraph(arena: Allocator, paragraphs: *std.ArrayList([]const u8), para: *std.ArrayList(u8)) Allocator.Error!void {
@@ -305,7 +315,7 @@ test "chunkNote: long note split, title on every passage, comment dropped" {
     const text = try readFixture(arena, "alpha/openspec/changes/archive/2026-03-10-add-retry/devlog/20260310-1015-decision-retry-policy.md");
     try testing.expect(wordCount(text) >= 300);
 
-    const ps = try chunkNote(arena, text);
+    const ps = (try chunkNote(arena, text)).passages;
     try testing.expect(ps.len > 1);
     for (ps, 0..) |p, i| {
         try testing.expect(std.mem.startsWith(u8, p, "Decision: retry policy\n\n"));
@@ -327,11 +337,11 @@ test "chunkNote: short note is one passage; fences and multi-line comments" {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const short = try chunkNote(arena, "# Answer: x\r\n\r\nYes.\r\n\r\n## Next\r\n\r\n- Go.\r\n");
+    const short = (try chunkNote(arena, "# Answer: x\r\n\r\nYes.\r\n\r\n## Next\r\n\r\n- Go.\r\n")).passages;
     try testing.expectEqual(@as(usize, 1), short.len);
     try testing.expectEqualStrings("Answer: x\n\nYes.\n\n## Next\n\n- Go.", short[0]);
 
-    const fenced = try chunkNote(arena,
+    const fenced = (try chunkNote(arena,
         \\# T
         \\<!-- Section: 1
         \\  spans lines -->
@@ -342,11 +352,11 @@ test "chunkNote: short note is one passage; fences and multi-line comments" {
         \\
         \\<!-- not a comment -->
         \\```
-    );
+    )).passages;
     try testing.expectEqual(@as(usize, 1), fenced.len);
     try testing.expectEqualStrings("T\n\nBefore.\n\n```\n# not a title\n\n<!-- not a comment -->\n```", fenced[0]);
 
-    const untitled = try chunkNote(arena, "Just text.");
+    const untitled = (try chunkNote(arena, "Just text.")).passages;
     try testing.expectEqualStrings("Just text.", untitled[0]);
 }
 
@@ -416,10 +426,10 @@ test "passages: dispatch and context prefixes from the source class" {
         }
     }.f;
 
-    try testing.expectEqualStrings("auth spec\n\n### Requirement: R\nBody.", (try passages(arena, mk("specs/auth/spec.md"), req))[0]);
-    try testing.expectEqualStrings("cache spec delta (add-cache)\n\n### Requirement: R\nBody.", (try passages(arena, mk("changes/add-cache/specs/cache/spec.md"), req))[0]);
-    try testing.expectEqualStrings("add-retry tasks\n\n## 1. A\n- [x] 1.1", (try passages(arena, mk("changes/archive/2026-03-10-add-retry/tasks.md"), "## 1. A\n- [x] 1.1\n"))[0]);
-    try testing.expectEqualStrings("T\n\nBody.", (try passages(arena, mk("changes/c/devlog/20260101-0000-note.md"), "# T\n\nBody.\n"))[0]);
+    try testing.expectEqualStrings("auth spec\n\n### Requirement: R\nBody.", (try passages(arena, mk("specs/auth/spec.md"), req)).passages[0]);
+    try testing.expectEqualStrings("cache spec delta (add-cache)\n\n### Requirement: R\nBody.", (try passages(arena, mk("changes/add-cache/specs/cache/spec.md"), req)).passages[0]);
+    try testing.expectEqualStrings("add-retry tasks\n\n## 1. A\n- [x] 1.1", (try passages(arena, mk("changes/archive/2026-03-10-add-retry/tasks.md"), "## 1. A\n- [x] 1.1\n")).passages[0]);
+    try testing.expectEqualStrings("T\n\nBody.", (try passages(arena, mk("changes/c/devlog/20260101-0000-note.md"), "# T\n\nBody.\n")).passages[0]);
 }
 
 test "kind names match the spec" {
@@ -450,7 +460,7 @@ test "fixture end to end: no excluded text reaches a passage" {
     var total: usize = 0;
     for (try sources.discover(arena, testing.io, ws)) |src| {
         const text = try std.Io.Dir.cwd().readFileAlloc(testing.io, src.path, arena, .unlimited);
-        const ps = try passages(arena, src, text);
+        const ps = (try passages(arena, src, text)).passages;
         try testing.expect(ps.len > 0);
         total += ps.len;
         for (ps) |p| {

@@ -2,7 +2,8 @@
 //!
 //! Provenance: adapted from memlite `src/embed.zig` at 749b246
 //! (daemonicai/memlite): nomic task prefixes and title-first truncation
-//! added (design D2), test env var renamed. Holds an embedding-mode `llama_context` (pooling = MEAN,
+//! added (design D2), test env var renamed, threads set to the performance-core
+//! count (llama.cpp defaults to 4). Holds an embedding-mode `llama_context` (pooling = MEAN,
 //! embeddings = true) tied to the Model from §6. `embed(text)` tokenizes,
 //! runs a single forward pass, pulls the pooled sequence embedding, and
 //! L2-normalizes it for cosine retrieval.
@@ -12,6 +13,18 @@ const c = @import("llama_c");
 const model_mod = @import("model.zig");
 
 const Allocator = std.mem.Allocator;
+
+/// Threads for embedding: the performance cores on Apple silicon (mixing in
+/// efficiency cores slows each step to their pace), else every logical CPU.
+pub fn embedThreads() i32 {
+    if (@import("builtin").os.tag == .macos) {
+        var n: c_int = 0;
+        var len: usize = @sizeOf(c_int);
+        if (std.c.sysctlbyname("hw.perflevel0.physicalcpu", &n, &len, null, 0) == 0 and n > 0) return n;
+    }
+    const n = std.Thread.getCpuCount() catch return 4;
+    return @intCast(@max(1, @min(n, 64)));
+}
 
 pub const Error = error{
     ContextInitFailed,
@@ -73,6 +86,9 @@ pub const Embedder = struct {
         params.embeddings = true;
         params.pooling_type = c.LLAMA_POOLING_TYPE_MEAN;
         params.no_perf = true;
+        const threads = embedThreads();
+        params.n_threads = threads;
+        params.n_threads_batch = threads;
 
         const n_ctx_train = model.trainedCtxLen();
         const n_ctx: u32 = if (n_ctx_train > 0) n_ctx_train else 2048;

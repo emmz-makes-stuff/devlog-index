@@ -1,6 +1,7 @@
 const std = @import("std");
 const bench = @import("bench.zig");
 const workspace = @import("workspace.zig");
+const update = @import("update.zig");
 
 const usage =
     \\Usage: devlog-index <command> [options]
@@ -54,6 +55,43 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (std.mem.eql(u8, args[1], "update")) {
+        var rebuild = false;
+        for (args[2..]) |a| {
+            if (std.mem.eql(u8, a, "--rebuild")) rebuild = true else {
+                std.debug.print("usage: devlog-index update [--rebuild]\n", .{});
+                std.process.exit(2);
+            }
+        }
+        const ws = resolveWorkspace(init, arena);
+        for (ws.members) |m| if (m.status != .ok)
+            std.debug.print("devlog-index: warning: member \"{s}\" {s}; {s}\n", .{
+                m.declared,
+                m.status.describe(),
+                if (rebuild) "it is left out of the rebuilt index" else "its indexed passages are kept",
+            });
+
+        const home = init.environ_map.get("HOME") orelse fatal("HOME is not set; it locates the model cache");
+        var mp = try update.ModelProvider.pinned(arena, init.gpa, init.io, home);
+        defer mp.deinit();
+        const t0 = std.Io.Timestamp.now(init.io, .awake);
+        var stderr_buf: [256]u8 = undefined;
+        var stderr_writer: std.Io.File.Writer = .init(.stderr(), init.io, &stderr_buf);
+        var diag: update.Diag = .{};
+        const r = update.run(arena, init.gpa, init.io, ws, .{ .rebuild = rebuild, .provider = mp.provider(), .progress = &stderr_writer.interface }, &diag) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => fatal(diag.message),
+        };
+        const elapsed_ms: u64 = @intCast(@divFloor(std.Io.Timestamp.now(init.io, .awake).nanoseconds - t0.nanoseconds, std.time.ns_per_ms));
+        try out.print(
+            "devlog-index: {s}: {d} files changed ({d} added, {d} changed, {d} removed), {d} unchanged; " ++
+                "{d} passages embedded, {d} reused; {d} passages in the index; {d}.{d:0>1} s\n",
+            .{ ws.name, r.filesChanged(), r.added, r.changed, r.removed, r.unchanged, r.passages_embedded, r.passages_reused, r.passages_total, @divFloor(elapsed_ms, 1000), @divFloor(@mod(elapsed_ms, 1000), 100) },
+        );
+        try out.flush();
+        return;
+    }
+
     if (std.mem.eql(u8, args[1], "bench-cold")) {
         bench.run(init, args[2..], out) catch |err| switch (err) {
             error.Usage => {
@@ -68,6 +106,17 @@ pub fn main(init: std.process.Init) !void {
 
     std.debug.print("devlog-index: unknown command '{s}'\n\n{s}", .{ args[1], usage });
     std.process.exit(2);
+}
+
+/// The workspace for every command except `init`, or exit naming `init`.
+fn resolveWorkspace(init: std.process.Init, arena: std.mem.Allocator) workspace.Workspace {
+    const cwd = std.process.currentPathAlloc(init.io, arena) catch |err|
+        fatal(std.fmt.allocPrint(arena, "cannot read the current directory ({s})", .{@errorName(err)}) catch "out of memory");
+    var diag: workspace.Diag = .{};
+    return workspace.resolve(arena, init.io, cwd, &diag) catch |err| switch (err) {
+        error.OutOfMemory => fatal("out of memory"),
+        else => fatal(diag.message),
+    };
 }
 
 fn fatal(message: []const u8) noreturn {
@@ -88,4 +137,7 @@ test {
     _ = @import("workspace.zig");
     _ = @import("sources.zig");
     _ = @import("chunk.zig");
+    _ = @import("db.zig");
+    _ = @import("index.zig");
+    _ = @import("update.zig");
 }

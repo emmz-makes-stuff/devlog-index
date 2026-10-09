@@ -24,9 +24,9 @@
 
 ## 5. Index storage and incremental update
 
-- [ ] 5.1 Implement the schema (D3): `settings`, `files`, `passages`, FTS5 (porter), `vec0` with the model dimension; model URL/dimension pinned and mismatch refused naming `update --rebuild`; verify unit tests for bootstrap and mismatch
-- [ ] 5.2 Implement `update` and `update --rebuild`: hash comparison, add/change/delete handling, archived-state changes, whole-workspace refresh from any member, single commit at the end, model downloaded on first need with progress, and failure without changing the index when the model can't load; verify integration tests on a temp copy of the fixture cover every corpus-indexing Incremental update scenario (embeddings stubbed when no model is set)
-- [ ] 5.3 Run `update` on the real workspace after creating its config with `init`; verify it completes, report passage counts and full-build time in a devlog note, and confirm a second run reports zero files changed in under 2 s
+- [x] 5.1 Implement the schema (D3): `settings`, `files`, `passages`, FTS5 (porter), `vec0` with the model dimension; model URL/dimension pinned and mismatch refused naming `update --rebuild`; verify unit tests for bootstrap and mismatch
+- [x] 5.2 Implement `update` and `update --rebuild`: hash comparison, add/change/delete handling, archived-state changes, whole-workspace refresh from any member, single commit at the end, model downloaded on first need with progress, and failure without changing the index when the model can't load; verify integration tests on a temp copy of the fixture cover every corpus-indexing Incremental update scenario (embeddings stubbed when no model is set)
+- [x] 5.3 Run `update` on the real workspace after creating its config with `init`; verify it completes, report passage counts and full-build time in a devlog note, and confirm a second run reports zero files changed in under 2 s
 
 ## 6. Status and freshness
 
