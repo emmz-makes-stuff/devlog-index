@@ -52,6 +52,12 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run devlog-index");
     run_step.dependOn(&run_cmd.step);
 
+    // Test-only paths; referenced from `test` blocks only, so they never reach
+    // the release binary.
+    const test_options = b.addOptions();
+    test_options.addOption([]const u8, "fixture_workspace", b.pathFromRoot("test/fixtures/workspace"));
+    exe_mod.addOptions("test_options", test_options);
+
     const exe_tests = b.addTest(.{ .root_module = exe_mod });
     const run_exe_tests = b.addRunArtifact(exe_tests);
     const test_step = b.step("test", "Run tests");

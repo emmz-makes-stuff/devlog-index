@@ -86,4 +86,6 @@ test {
     _ = @import("download.zig");
     _ = @import("embed.zig");
     _ = @import("workspace.zig");
+    _ = @import("sources.zig");
+    _ = @import("chunk.zig");
 }

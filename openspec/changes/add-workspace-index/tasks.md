@@ -18,9 +18,9 @@
 
 ## 4. Fixture workspace, discovery and chunking
 
-- [ ] 4.1 Commit a synthetic fixture workspace under `test/fixtures/workspace/` (two declared members plus an undeclared sibling; an archived change with a reversal thread referenced by filename, by `HHMM` time and by `§N-done`; a main spec and an archived delta of it; an active change with a delta; a legacy `DEVLOG.md`) with a README describing what each file exercises; verify the files exist and the README lists each scenario
-- [ ] 4.2 Implement source discovery per the Indexed sources requirement (archived deltas, legacy `DEVLOG.md` and undeclared repos excluded); verify a test against the fixture lists exactly the expected files
-- [ ] 4.3 Implement chunking and classification (D7): note paragraphs ≥ 80 words with title prefix and section comment stripped, spec per requirement plus purpose, other artifacts per `##`; kind and time from note filenames; verify unit tests for each rule, including the `stopped` example from the corpus-indexing spec
+- [x] 4.1 Commit a synthetic fixture workspace under `test/fixtures/workspace/` (two declared members plus an undeclared sibling; an archived change with a reversal thread referenced by filename, by `HHMM` time and by `§N-done`; a main spec and an archived delta of it; an active change with a delta; a legacy `DEVLOG.md`) with a README describing what each file exercises; verify the files exist and the README lists each scenario
+- [x] 4.2 Implement source discovery per the Indexed sources requirement (archived deltas, legacy `DEVLOG.md` and undeclared repos excluded); verify a test against the fixture lists exactly the expected files
+- [x] 4.3 Implement chunking and classification (D7): note paragraphs ≥ 80 words with title prefix and section comment stripped, spec per requirement plus purpose, other artifacts per `##`; kind and time from note filenames; verify unit tests for each rule, including the `stopped` example from the corpus-indexing spec
 
 ## 5. Index storage and incremental update
 
