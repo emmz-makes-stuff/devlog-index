@@ -14,7 +14,7 @@
 //!
 //! The embedding model is obtained from a `Provider` on first need only: a
 //! run with nothing to embed never loads (or downloads) it. `--rebuild`
-//! builds a fresh index beside the old one and renames it into place.
+//! builds a fresh index beside the old one, then swaps it in (`swapIn`).
 
 const std = @import("std");
 const Io = std.Io;
@@ -28,6 +28,7 @@ const model_mod = @import("model.zig");
 const model_url = @import("model_url.zig");
 const download = @import("download.zig");
 const embed_mod = @import("embed.zig");
+const freshness = @import("freshness.zig");
 
 pub const Embedder = struct {
     ptr: *anyopaque,
@@ -108,19 +109,36 @@ fn runInner(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
 
     if (!opts.rebuild) return updateAt(arena, gpa, io, ws, opts, final_path, diag);
 
-    // Build beside the old index, then swap it in; until the rename the old
+    // Build beside the old index, then swap it in; until the swap the old
     // index stays intact and usable.
     const tmp_path = try std.fmt.allocPrintSentinel(arena, "{s}.rebuild", .{final_path}, 0);
-    deleteIfExists(io, tmp_path);
-    deleteIfExists(io, try std.fmt.allocPrint(arena, "{s}-journal", .{tmp_path}));
-    errdefer deleteIfExists(io, tmp_path);
+    deleteDbFiles(arena, io, tmp_path);
+    defer deleteDbFiles(arena, io, tmp_path);
     const report = try updateAt(arena, gpa, io, ws, opts, tmp_path, diag);
-    try cwd.rename(tmp_path, cwd, final_path, io);
+    try swapIn(io, tmp_path, final_path);
     return report;
 }
 
-fn deleteIfExists(io: Io, path: []const u8) void {
-    Io.Dir.cwd().deleteFile(io, path) catch {};
+/// Make the rebuilt database at `built` the index at `live`. With no index
+/// yet it is renamed into place. Otherwise its pages are copied into the
+/// live file through SQLite: renaming over a WAL database that a reader has
+/// open would pair the new file with the old `-wal`/`-shm` files.
+fn swapIn(io: Io, built: [:0]const u8, live: [:0]const u8) !void {
+    const cwd = Io.Dir.cwd();
+    cwd.access(io, live, .{}) catch return cwd.rename(built, cwd, live, io);
+    var src = try dbm.Db.open(built, .read_only);
+    defer src.close();
+    var dest = try dbm.Db.open(live, .read_write_create);
+    defer dest.close();
+    try dest.replaceWith(src);
+}
+
+/// The database file and its journal, WAL and shared-memory files.
+fn deleteDbFiles(arena: Allocator, io: Io, path: []const u8) void {
+    for ([_][]const u8{ "", "-journal", "-wal", "-shm" }) |suffix| {
+        const p = std.fmt.allocPrint(arena, "{s}{s}", .{ path, suffix }) catch continue;
+        Io.Dir.cwd().deleteFile(io, p) catch {};
+    }
 }
 
 const Existing = struct {
@@ -226,7 +244,7 @@ fn updateAt(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
     var it = existing.iterator();
     while (it.next()) |entry| {
         if (entry.value_ptr.seen) continue;
-        if (underMissingMember(entry.key_ptr.*, missing.items)) continue;
+        if (freshness.underMissingMember(entry.key_ptr.*, missing.items)) continue;
         report.removed += 1;
         try w.collectPassages(entry.value_ptr.id, &stale_passages);
         try w.deleteFile(entry.value_ptr.id);
@@ -284,14 +302,6 @@ fn takeSnapshot(arena: Allocator, io: Io, srcs: []const sources.Source, diag: *D
 fn readFailed(arena: Allocator, diag: *Diag, path: []const u8, err: anyerror) Error {
     diag.message = try std.fmt.allocPrint(arena, "cannot read {s} ({s}); the index is unchanged", .{ path, @errorName(err) });
     return error.UpdateFailed;
-}
-
-fn underMissingMember(path: []const u8, missing: []const workspace.Member) bool {
-    for (missing) |m| {
-        if (std.mem.startsWith(u8, path, m.path) and path.len > m.path.len and path[m.path.len] == std.fs.path.sep)
-            return true;
-    }
-    return false;
 }
 
 pub fn hashHex(bytes: []const u8) [64]u8 {
@@ -584,110 +594,8 @@ pub const ModelProvider = struct {
 // ---- tests ----
 
 const testing = std.testing;
-
-/// Deterministic 8-d vectors from the text's hash; counts calls and can be
-/// told to fail on load or after N embeddings.
-const Stub = struct {
-    fail_load: bool = false,
-    fail_after: ?usize = null,
-    loads: usize = 0,
-    embeds: usize = 0,
-
-    fn provider(s: *Stub) Provider {
-        return .{ .ptr = s, .getFn = get };
-    }
-
-    fn get(ptr: *anyopaque) anyerror!Embedder {
-        const s: *Stub = @ptrCast(@alignCast(ptr));
-        s.loads += 1;
-        if (s.fail_load) return error.ModelLoadFailed;
-        return .{ .ptr = s, .dim = 8, .embedFn = embedFn };
-    }
-
-    fn embedFn(ptr: *anyopaque, gpa: Allocator, text: []const u8) anyerror![]f32 {
-        const s: *Stub = @ptrCast(@alignCast(ptr));
-        if (s.fail_after) |n| if (s.embeds >= n) return error.Interrupted;
-        s.embeds += 1;
-        var digest: [32]u8 = undefined;
-        std.crypto.hash.sha2.Sha256.hash(text, &digest, .{});
-        const v = try gpa.alloc(f32, 8);
-        var sum: f32 = 0;
-        for (v, 0..) |*x, i| {
-            x.* = @as(f32, @floatFromInt(digest[i])) - 127.5;
-            sum += x.* * x.*;
-        }
-        for (v) |*x| x.* /= @sqrt(sum);
-        return v;
-    }
-};
-
-const Fixture = struct {
-    arena_state: std.heap.ArenaAllocator,
-    tmp: testing.TmpDir,
-    root: []const u8,
-
-    fn init() !Fixture {
-        var f: Fixture = .{ .arena_state = .init(testing.allocator), .tmp = testing.tmpDir(.{}), .root = "" };
-        errdefer f.deinit();
-        const a = f.arena_state.allocator();
-        var buf: [std.fs.max_path_bytes]u8 = undefined;
-        const n = try f.tmp.dir.realPath(testing.io, &buf);
-        f.root = try a.dupe(u8, buf[0..n]);
-        try copyTree(a, @import("test_options").fixture_workspace, f.tmp.dir);
-        return f;
-    }
-
-    fn deinit(f: *Fixture) void {
-        f.tmp.cleanup();
-        f.arena_state.deinit();
-    }
-
-    fn arena(f: *Fixture) Allocator {
-        return f.arena_state.allocator();
-    }
-
-    fn path(f: *Fixture, rel: []const u8) ![]const u8 {
-        return std.fs.path.join(f.arena(), &.{ f.root, rel });
-    }
-
-    /// Resolve from `start` (relative to the fixture root) and update.
-    fn update(f: *Fixture, start: []const u8, stub: *Stub, rebuild: bool) !Report {
-        var wdiag: workspace.Diag = .{};
-        const ws = try workspace.resolve(f.arena(), testing.io, try f.path(start), &wdiag);
-        var diag: Diag = .{};
-        return run(f.arena(), testing.allocator, testing.io, ws, .{ .provider = stub.provider(), .rebuild = rebuild, .model_url = "test://stub" }, &diag) catch |err| {
-            std.debug.print("update: {s}: {s}\n", .{ @errorName(err), diag.message });
-            return err;
-        };
-    }
-
-    fn db(f: *Fixture) !dbm.Db {
-        return dbm.Db.open(try std.fs.path.joinZ(f.arena(), &.{ f.root, ".devlog-index", "index.db" }), .read_only);
-    }
-
-    fn count(f: *Fixture, sql: []const u8) !i64 {
-        var d = try f.db();
-        defer d.close();
-        return (try d.oneInt(sql)).?;
-    }
-
-    fn write(f: *Fixture, rel: []const u8, data: []const u8) !void {
-        if (std.fs.path.dirname(rel)) |p| try f.tmp.dir.createDirPath(testing.io, p);
-        try f.tmp.dir.writeFile(testing.io, .{ .sub_path = rel, .data = data });
-    }
-};
-
-fn copyTree(arena: Allocator, src_root: []const u8, dst: Io.Dir) !void {
-    var src = try Io.Dir.cwd().openDir(testing.io, src_root, .{ .iterate = true });
-    defer src.close(testing.io);
-    var walker = try src.walk(arena);
-    defer walker.deinit();
-    while (try walker.next(testing.io)) |entry| switch (entry.kind) {
-        .directory => try dst.createDirPath(testing.io, entry.path),
-        .file => try src.copyFile(entry.path, dst, entry.path, testing.io, .{}),
-        else => {},
-    };
-}
+const Stub = @import("testutil.zig").Stub;
+const Fixture = @import("testutil.zig").Fixture;
 
 const new_note =
     \\# Decision: token audience
@@ -860,12 +768,19 @@ test "update: model mismatch is refused; --rebuild replaces the index" {
     try testing.expect(std.mem.indexOf(u8, diag.message, "test://other") != null);
     try testing.expect(std.mem.indexOf(u8, diag.message, index.rebuild_command) != null);
 
+    // A reader holding the index open across the rebuild sees the new index.
+    var reader = try f.db();
+    defer reader.close();
+    try testing.expectEqual(@as(?i64, 1), try reader.oneInt("SELECT count(*) FROM settings WHERE value = 'test://stub'"));
+
     diag = .{};
     const rebuilt = try run(f.arena(), testing.allocator, testing.io, ws, .{ .provider = stub.provider(), .model_url = "test://other", .rebuild = true }, &diag);
     try testing.expectEqual(@as(usize, 19), rebuilt.added);
     try testing.expectEqual(first.passages_total, rebuilt.passages_total);
     try testing.expectEqual(first.passages_total, rebuilt.passages_embedded + rebuilt.passages_reused);
     try testing.expectError(error.FileNotFound, f.tmp.dir.access(testing.io, ".devlog-index/index.db.rebuild", .{}));
+    try testing.expectEqual(@as(?i64, 1), try reader.oneInt("SELECT count(*) FROM settings WHERE value = 'test://other'"));
+    try testing.expectEqual(first.passages_total, @as(usize, @intCast((try reader.oneInt("SELECT count(*) FROM passages_vec")).?)));
 
     // The rebuilt index is pinned to the new model.
     diag = .{};

@@ -59,6 +59,18 @@ pub const Db = struct {
         return c.sqlite3_last_insert_rowid(db.handle);
     }
 
+    /// Replace this database's content with `src`'s, page for page, under
+    /// SQLite's own locking: readers of `dest` (in WAL mode) keep seeing the
+    /// old content until the copy commits.
+    pub fn replaceWith(dest: Db, src: Db) Error!void {
+        const b = c.sqlite3_backup_init(dest.handle, "main", src.handle, "main") orelse
+            return mapRc(c.sqlite3_errcode(dest.handle));
+        const rc = c.sqlite3_backup_step(b, -1);
+        const finish_rc = c.sqlite3_backup_finish(b);
+        if (rc != c.SQLITE_DONE) return mapRc(rc);
+        try check(finish_rc);
+    }
+
     /// The single integer a query returns, or null when it returns no row.
     pub fn oneInt(db: Db, sql: []const u8) Error!?i64 {
         var s = try db.prepare(sql);
@@ -168,4 +180,69 @@ test "prepare, bind, step round trip" {
     try std.testing.expect(!try sel.step());
     try std.testing.expectEqual(@as(?i64, 1), try db.oneInt("SELECT count(*) FROM t"));
     try std.testing.expectError(error.SqliteFailed, db.exec("SELECT * FROM nope"));
+}
+
+fn tmpDbPath(buf: []u8, tmp: *std.testing.TmpDir, name: []const u8) ![:0]const u8 {
+    var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPath(std.testing.io, &dir_buf);
+    return std.fmt.bufPrintZ(buf, "{s}/{s}", .{ dir_buf[0..n], name });
+}
+
+test "WAL: a reader sees the last commit while a write transaction is open" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try tmpDbPath(&buf, &tmp, "w.db");
+
+    var w = try Db.open(path, .read_write_create);
+    defer w.close();
+    try w.exec("PRAGMA journal_mode = WAL");
+    try w.exec("CREATE TABLE t(a INTEGER); INSERT INTO t VALUES (1)");
+    try w.exec("BEGIN IMMEDIATE; INSERT INTO t VALUES (2), (3)");
+
+    var r = try Db.open(path, .read_only);
+    defer r.close();
+    try std.testing.expectEqual(@as(?i64, 1), try r.oneInt("SELECT count(*) FROM t"));
+    try w.exec("COMMIT");
+    try std.testing.expectEqual(@as(?i64, 3), try r.oneInt("SELECT count(*) FROM t"));
+}
+
+test "WAL: a cleanly closed database opens read-only" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try tmpDbPath(&buf, &tmp, "w.db");
+    {
+        var w = try Db.open(path, .read_write_create);
+        defer w.close();
+        try w.exec("PRAGMA journal_mode = WAL; CREATE TABLE t(a INTEGER); INSERT INTO t VALUES (1)");
+    }
+    var r = try Db.open(path, .read_only);
+    defer r.close();
+    try std.testing.expectEqual(@as(?i64, 1), try r.oneInt("SELECT count(*) FROM t"));
+}
+
+test "replaceWith swaps content under an open reader" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var buf_a: [std.fs.max_path_bytes]u8 = undefined;
+    var buf_b: [std.fs.max_path_bytes]u8 = undefined;
+    const live_path = try tmpDbPath(&buf_a, &tmp, "live.db");
+    const new_path = try tmpDbPath(&buf_b, &tmp, "new.db");
+
+    var live = try Db.open(live_path, .read_write_create);
+    defer live.close();
+    try live.exec("PRAGMA journal_mode = WAL; CREATE TABLE old(a INTEGER)");
+    var reader = try Db.open(live_path, .read_only);
+    defer reader.close();
+    try std.testing.expectEqual(@as(?i64, 0), try reader.oneInt("SELECT count(*) FROM old"));
+
+    {
+        var fresh = try Db.open(new_path, .read_write_create);
+        defer fresh.close();
+        try fresh.exec("PRAGMA journal_mode = WAL; CREATE TABLE t(a INTEGER); INSERT INTO t VALUES (7)");
+        try live.replaceWith(fresh);
+    }
+    try std.testing.expectEqual(@as(?i64, 7), try reader.oneInt("SELECT a FROM t"));
+    try std.testing.expectError(error.SqliteFailed, reader.exec("SELECT * FROM old"));
 }

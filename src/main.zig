@@ -2,6 +2,8 @@ const std = @import("std");
 const bench = @import("bench.zig");
 const workspace = @import("workspace.zig");
 const update = @import("update.zig");
+const status = @import("status.zig");
+const model_url = @import("model_url.zig");
 
 const usage =
     \\Usage: devlog-index <command> [options]
@@ -92,6 +94,27 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (std.mem.eql(u8, args[1], "status")) {
+        var json = false;
+        for (args[2..]) |a| {
+            if (std.mem.eql(u8, a, "--json")) json = true else {
+                std.debug.print("usage: devlog-index status [--json]\n", .{});
+                std.process.exit(2);
+            }
+        }
+        const ws = resolveWorkspace(init, arena);
+        const home = init.environ_map.get("HOME") orelse fatal("HOME is not set; it locates the model cache");
+        const model_path = try model_url.cachePathZ(arena, home, try model_url.parse(model_url.pinned_url));
+        var diag: status.Diag = .{};
+        const s = status.gather(arena, init.io, ws, model_path, &diag) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => fatal(diag.message),
+        };
+        if (json) try status.writeJson(s, out) else try status.writeText(s, out);
+        try out.flush();
+        return;
+    }
+
     if (std.mem.eql(u8, args[1], "bench-cold")) {
         bench.run(init, args[2..], out) catch |err| switch (err) {
             error.Usage => {
@@ -140,4 +163,6 @@ test {
     _ = @import("db.zig");
     _ = @import("index.zig");
     _ = @import("update.zig");
+    _ = @import("freshness.zig");
+    _ = @import("status.zig");
 }

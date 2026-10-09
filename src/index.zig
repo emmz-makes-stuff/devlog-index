@@ -76,6 +76,10 @@ pub const Index = struct {
     pub fn open(arena: Allocator, path: [:0]const u8, model_url: []const u8, diag: *Diag) OpenError!Index {
         var db = try Db.open(path, .read_write_create);
         errdefer db.close();
+        // WAL, so `status` and `query` read the last committed index while a
+        // long update is writing. Persistent in the file; set outside a
+        // transaction.
+        try db.exec("PRAGMA journal_mode = WAL");
         try db.exec("BEGIN IMMEDIATE");
         errdefer db.exec("ROLLBACK") catch {};
         try db.exec(schema);
@@ -107,11 +111,7 @@ pub const Index = struct {
     }
 
     pub fn setting(ix: Index, arena: Allocator, key: []const u8) (dbm.Error || Allocator.Error)!?[]const u8 {
-        var s = try ix.db.prepare("SELECT value FROM settings WHERE key = ?");
-        defer s.finalize();
-        try s.bindText(1, key);
-        if (!try s.step()) return null;
-        return try arena.dupe(u8, s.text(0));
+        return readSetting(arena, ix.db, key);
     }
 
     pub fn putSetting(ix: Index, key: []const u8, value: []const u8) dbm.Error!void {
@@ -137,6 +137,47 @@ pub const Index = struct {
         ix.dim = dim;
     }
 };
+
+pub const ReadError = error{ NoIndex, SchemaMismatch, IndexBusy, IndexUnreadable } || Allocator.Error;
+
+/// Open an existing index read-only, for `status` and `query`. A missing
+/// index, another schema or an unreadable file is an error with
+/// `diag.message` saying what to run.
+pub fn openRead(arena: Allocator, io: std.Io, path: [:0]const u8, diag: *Diag) ReadError!Db {
+    std.Io.Dir.cwd().access(io, path, .{}) catch {
+        diag.message = try std.fmt.allocPrint(arena, "no index at {s}; build it with: devlog-index update", .{path});
+        return error.NoIndex;
+    };
+    var db = Db.open(path, .read_only) catch {
+        diag.message = try std.fmt.allocPrint(arena, "cannot open {s}; rebuild it with: {s}", .{ path, rebuild_command });
+        return error.IndexUnreadable;
+    };
+    errdefer db.close();
+    const stored = readSetting(arena, db, "schema_version") catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.SqliteBusy => {
+            diag.message = try std.fmt.allocPrint(arena, "{s} is locked by another devlog-index; try again shortly", .{path});
+            return error.IndexBusy;
+        },
+        else => {
+            diag.message = try std.fmt.allocPrint(arena, "cannot read {s}; rebuild it with: {s}", .{ path, rebuild_command });
+            return error.IndexUnreadable;
+        },
+    };
+    if (stored == null or !std.mem.eql(u8, stored.?, schema_version)) {
+        diag.message = try std.fmt.allocPrint(arena, "{s} has index schema {s}, this devlog-index uses {s}; rebuild it with: {s}", .{ path, stored orelse "(none)", schema_version, rebuild_command });
+        return error.SchemaMismatch;
+    }
+    return db;
+}
+
+pub fn readSetting(arena: Allocator, db: Db, key: []const u8) (dbm.Error || Allocator.Error)!?[]const u8 {
+    var s = try db.prepare("SELECT value FROM settings WHERE key = ?");
+    defer s.finalize();
+    try s.bindText(1, key);
+    if (!try s.step()) return null;
+    return try arena.dupe(u8, s.text(0));
+}
 
 // ---- tests ----
 
@@ -199,4 +240,35 @@ test "open refuses a different model, naming both and the rebuild command" {
     // The refused open left the index as it was.
     var again = try Index.open(arena, path, "https://example/model-a.gguf", &diag);
     again.close();
+}
+
+test "the index is in WAL mode; openRead checks it exists and its schema" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = try tmpIndexPath(arena, &tmp);
+
+    var diag: Diag = .{};
+    try testing.expectError(error.NoIndex, openRead(arena, testing.io, path, &diag));
+    try testing.expect(std.mem.indexOf(u8, diag.message, "devlog-index update") != null);
+
+    var ix = try Index.open(arena, path, "https://example/model-a.gguf", &diag);
+    {
+        var s = try ix.db.prepare("PRAGMA journal_mode");
+        defer s.finalize();
+        try testing.expect(try s.step());
+        try testing.expectEqualStrings("wal", s.text(0));
+    }
+    ix.close();
+
+    var r = try openRead(arena, testing.io, path, &diag);
+    r.close();
+
+    var w = try Db.open(path, .read_write_create);
+    try w.exec("UPDATE settings SET value = '0' WHERE key = 'schema_version'");
+    w.close();
+    try testing.expectError(error.SchemaMismatch, openRead(arena, testing.io, path, &diag));
+    try testing.expect(std.mem.indexOf(u8, diag.message, rebuild_command) != null);
 }

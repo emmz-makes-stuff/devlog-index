@@ -30,7 +30,7 @@
 
 ## 6. Status and freshness
 
-- [ ] 6.1 Implement change detection (size + mtime, hash on mismatch) and `status [--json]` reporting workspace, per-member counts or missing, changed-file count, last update time and model presence (D9); verify integration tests for a stale index (two notes added → "2 files changed") and a missing member
+- [x] 6.1 Implement change detection (size + mtime, hash on mismatch) and `status [--json]` reporting workspace, per-member counts or missing, changed-file count, last update time and model presence (D9); verify integration tests for a stale index (two notes added → "2 files changed") and a missing member
 
 ## 7. Query
 
