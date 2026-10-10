@@ -102,9 +102,10 @@ Tuning these numbers is done against the golden set, not by intuition.
 ### D8. Thread expansion
 At query time, for each devlog result, scan later notes in the same change (one indexed query on
 `files`) for references to it: its filename (with or without `.md`), its `HHMM` time as a standalone
-four-digit token next to "note", or its section as `§N-done` / `section N done` / `§N` when the result
-is a `section-N-*` note. Matching notes are attached as thread entries in time order. Matching is
-deliberately conservative: same change only, later notes only.
+four-digit token next to "note", or its section as `§N-done` / `section N done` when the result
+is a `section-N-done` note. Matching notes are attached as thread entries in time order, each with the
+passages that make the reference. Matching is deliberately conservative: same change only, later notes
+only, and no bare `§N` (it appears in almost every later note).
 *Alternative:* resolve references at index time into a link table — rejected for v1 because the
 reference patterns will be tuned, and a query-time scan over one change's notes is cheap (tens of files).
 

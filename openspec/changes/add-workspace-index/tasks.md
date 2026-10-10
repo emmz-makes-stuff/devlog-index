@@ -42,8 +42,8 @@
 
 ## 8. Thread expansion
 
-- [ ] 8.1 Implement thread expansion (D8): later notes in the same change referring to a result by filename, by `HHMM` next to "note", or by `§N-done` / `section N done` for `section-N-*` notes; attach as thread entries in time order; verify fixture tests for each reference form and that a same-time mention in another change is not threaded
-- [ ] 8.2 Carry query notices in `--json`: add `"notices": [...]` (semantic search skipped, stale index; empty when none) to every result object, still also on stderr; verify the model-unavailable and stale-index tests assert the field on every parsed `--json` line
+- [x] 8.1 Implement thread expansion (D8): later notes in the same change referring to a result by filename, by `HHMM` next to "note", or by `§N-done` / `section N done` for `section-N-done` notes; attach as thread entries in time order; verify fixture tests for each reference form and that a same-time mention in another change is not threaded
+- [x] 8.2 Carry query notices in `--json`: add `"notices": [...]` (semantic search skipped, stale index; empty when none) to every result object, still also on stderr; verify the model-unavailable and stale-index tests assert the field on every parsed `--json` line
 
 ## 9. Retrieval evaluation
 

@@ -10,7 +10,14 @@
 //! cannot run (model not cached or failing to load, another model, no
 //! vectors) the lexical results come with a notice saying why, and a stale
 //! index (files changed since the last update) comes with a notice counting
-//! them. A missing index is an error naming `update`.
+//! them. A missing index is an error naming `update`. The notices go on every
+//! result as well as to stderr, so a `--json` caller reading only stdout
+//! still sees them.
+//!
+//! Each devlog-note result carries its thread (D8): the later notes in the
+//! same change that refer back to it by filename, by `HHMM` next to "note",
+//! or, for a `section-N-done` note, by `§N-done` / `section N done`. Each
+//! entry holds the passages that make the reference.
 
 const std = @import("std");
 const Io = std.Io;
@@ -40,6 +47,7 @@ pub const ThreadEntry = struct {
     path: []const u8,
     kind: []const u8,
     note_time: ?[]const u8,
+    /// The note's passages that make the reference.
     text: []const u8,
 };
 
@@ -58,6 +66,8 @@ pub const Result = struct {
     methods: []const []const u8,
     text: []const u8,
     thread: []const ThreadEntry = &.{},
+    /// The query's notices (`Outcome.notices`), on every result.
+    notices: []const []const u8 = &.{},
 };
 
 pub const Outcome = struct {
@@ -121,10 +131,9 @@ fn runInner(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
         } else |why| try notices.append(arena, try skipped(arena, try describeEmbedFailure(arena, why, dim)));
     }
 
-    return .{
-        .results = try load(arena, db, try merge(arena, lex, sem)),
-        .notices = notices.items,
-    };
+    const results = try load(arena, db, try merge(arena, lex, sem));
+    for (results) |*r| r.notices = notices.items;
+    return .{ .results = results, .notices = notices.items };
 }
 
 fn skipped(arena: Allocator, why: []const u8) Allocator.Error![]const u8 {
@@ -243,12 +252,18 @@ pub fn merge(arena: Allocator, lex: []const i64, sem: []const i64) Allocator.Err
     return out.items;
 }
 
-fn load(arena: Allocator, db: dbm.Db, hits: []const Hit) ![]const Result {
+fn load(arena: Allocator, db: dbm.Db, hits: []const Hit) ![]Result {
     var s = try db.prepare(
         \\SELECT p.text, f.path, f.rel, f.member, f.change, f.capability, f.archived, f.kind, f.note_time
         \\FROM passages p JOIN files f ON f.id = p.file_id WHERE p.id = ?
     );
     defer s.finalize();
+    var later = try db.prepare(
+        \\SELECT f.path, f.kind, f.note_time, p.text FROM files f JOIN passages p ON p.file_id = f.id
+        \\WHERE f.member = ? AND f.change = ? AND f.archived = ? AND f.note_time > ?
+        \\ORDER BY f.note_time, f.path, p.ordinal
+    );
+    defer later.finalize();
     const out = try arena.alloc(Result, hits.len);
     for (hits, out) |h, *r| {
         s.reset();
@@ -269,8 +284,140 @@ fn load(arena: Allocator, db: dbm.Db, hits: []const Hit) ![]const Result {
             .note_time = if (s.isNull(8)) null else try arena.dupe(u8, s.text(8)),
             .methods = methods.items,
         };
+        r.thread = try threadOf(arena, later, r.*);
     }
     return out;
+}
+
+/// The later notes in `r`'s change that refer back to it, in time order,
+/// using `later` (the thread query in `load`).
+fn threadOf(arena: Allocator, later: dbm.Stmt, r: Result) ![]const ThreadEntry {
+    const change = r.change orelse return &.{};
+    const time = r.note_time orelse return &.{};
+    const refs = Refs.of(r.path) orelse return &.{};
+    later.reset();
+    try later.bindText(1, r.member);
+    try later.bindText(2, change);
+    try later.bindInt(3, @intFromBool(std.mem.eql(u8, r.state, "archived")));
+    try later.bindText(4, time);
+    var out: std.ArrayList(ThreadEntry) = .empty;
+    while (try later.step()) {
+        const passage = later.text(3);
+        if (!refs.foundIn(passage)) continue;
+        // Rows are ordered by note, so a note's referring passages are adjacent.
+        if (out.items.len > 0 and std.mem.eql(u8, out.items[out.items.len - 1].path, later.text(0))) {
+            const last = &out.items[out.items.len - 1];
+            last.text = try std.mem.concat(arena, u8, &.{ last.text, "\n\n", passage });
+            continue;
+        }
+        try out.append(arena, .{
+            .path = try arena.dupe(u8, later.text(0)),
+            .kind = try arena.dupe(u8, later.text(1)),
+            .note_time = try arena.dupe(u8, later.text(2)),
+            .text = try arena.dupe(u8, passage),
+        });
+    }
+    return out.items;
+}
+
+/// What a later note may call a devlog note by (D8).
+pub const Refs = struct {
+    /// The basename without `.md`.
+    stem: []const u8,
+    /// `HHMM` from the basename.
+    time: []const u8,
+    /// `N` for a `section-N-done` note; section references point only there.
+    section: ?[]const u8,
+
+    /// Null unless `path` names a devlog note, `YYYYMMDD-HHMM-<slug>.md`.
+    pub fn of(path: []const u8) ?Refs {
+        const base = std.fs.path.basename(path);
+        if (base.len < "YYYYMMDD-HHMM-x.md".len or !std.mem.endsWith(u8, base, ".md") or base[8] != '-' or base[13] != '-') return null;
+        for (base[0..13], 0..) |b, i| if (i != 8 and !std.ascii.isDigit(b)) return null;
+        return .{ .stem = base[0 .. base.len - 3], .time = base[9..13], .section = sectionDone(base[14 .. base.len - 3]) };
+    }
+
+    /// True when `text` refers to the note: its filename (with or without
+    /// `.md`), its time next to "note" ("the 1346 note", "note 1346"), or
+    /// for a section-done note "§N-done" or "section N done".
+    pub fn foundIn(refs: Refs, text: []const u8) bool {
+        var i: usize = 0;
+        while (std.mem.indexOfPos(u8, text, i, refs.stem)) |at| : (i = at + 1) {
+            if (standalone(text, at, refs.stem.len)) return true;
+        }
+        i = 0;
+        while (std.mem.indexOfPos(u8, text, i, refs.time)) |at| : (i = at + 1) {
+            if (standalone(text, at, refs.time.len) and
+                (wordAt(text, skipSpace(text, at + refs.time.len, .forward), "note") or wordBefore(text, at, "note")))
+                return true;
+        }
+        const n = refs.section orelse return false;
+        i = 0;
+        while (std.mem.indexOfPos(u8, text, i, "§")) |at| : (i = at + 1) {
+            const p = at + "§".len;
+            if (std.mem.startsWith(u8, text[p..], n) and wordAt(text, p + n.len, "-done")) return true;
+        }
+        i = 0;
+        while (std.ascii.indexOfIgnoreCasePos(text, i, "section")) |at| : (i = at + 1) {
+            if (at > 0 and isWordByte(text[at - 1])) continue;
+            const p = skipSpace(text, at + "section".len, .forward);
+            if (p == at + "section".len or !std.mem.startsWith(u8, text[p..], n)) continue;
+            const q = skipSpace(text, p + n.len, .forward);
+            if (q > p + n.len and wordAt(text, q, "done")) return true;
+        }
+        return false;
+    }
+};
+
+/// `N` when `slug` is `section-N-done` (optionally followed by `-<more>`).
+fn sectionDone(slug: []const u8) ?[]const u8 {
+    const rest = if (std.mem.startsWith(u8, slug, "section-")) slug["section-".len..] else return null;
+    var n: usize = 0;
+    while (n < rest.len and std.ascii.isDigit(rest[n])) n += 1;
+    if (n == 0) return null;
+    const tail = rest[n..];
+    return if (std.mem.eql(u8, tail, "-done") or std.mem.startsWith(u8, tail, "-done-")) rest[0..n] else null;
+}
+
+fn isWordByte(b: u8) bool {
+    return std.ascii.isAlphanumeric(b) or b == '-' or b == '_';
+}
+
+/// True when `text[at..at+len]` is not part of a longer word, number or name.
+fn standalone(text: []const u8, at: usize, len: usize) bool {
+    if (at > 0 and isWordByte(text[at - 1])) return false;
+    return at + len == text.len or !isWordByte(text[at + len]);
+}
+
+/// True when `word` (any case) starts at `pos` and ends at a word boundary.
+fn wordAt(text: []const u8, pos: usize, word: []const u8) bool {
+    if (pos > text.len or !std.ascii.startsWithIgnoreCase(text[pos..], word)) return false;
+    const end = pos + word.len;
+    return end == text.len or !std.ascii.isAlphanumeric(text[end]);
+}
+
+/// True when `word` (any case) ends just before whitespace before `pos`.
+fn wordBefore(text: []const u8, pos: usize, word: []const u8) bool {
+    const end = skipSpace(text, pos, .backward);
+    if (end == pos or end < word.len) return false;
+    const start = end - word.len;
+    if (!std.ascii.eqlIgnoreCase(text[start..end], word)) return false;
+    return start == 0 or !std.ascii.isAlphanumeric(text[start - 1]);
+}
+
+/// The position past the whitespace from `pos` in `dir`; for `.backward`,
+/// the end of the text before it.
+fn skipSpace(text: []const u8, pos: usize, dir: enum { forward, backward }) usize {
+    var p = pos;
+    switch (dir) {
+        .forward => while (p < text.len and std.ascii.isWhitespace(text[p])) {
+            p += 1;
+        },
+        .backward => while (p > 0 and std.ascii.isWhitespace(text[p - 1])) {
+            p -= 1;
+        },
+    }
+    return p;
 }
 
 pub fn writeText(results: []const Result, out: *Io.Writer) Io.Writer.Error!void {
@@ -288,6 +435,10 @@ pub fn writeText(results: []const Result, out: *Io.Writer) Io.Writer.Error!void 
         for (r.methods, 0..) |m, i| try out.print("{s}{s}", .{ if (i > 0) " + " else "", m });
         try out.print("\n   {s}\n\n", .{r.path});
         try writeIndented(out, r.text, "   ");
+        for (r.thread) |t| {
+            try out.print("\n   ↳ later note · {s} · {s}\n     {s}\n\n", .{ t.note_time orelse "", t.kind, t.path });
+            try writeIndented(out, t.text, "     ");
+        }
     }
 }
 
@@ -463,8 +614,15 @@ test "query: labels on an archived decision note; --json lines all parse" {
     var n: usize = 0;
     while (lines.next()) |line| : (n += 1) {
         const v = try std.json.parseFromSliceLeaky(std.json.Value, f.arena(), line, .{});
-        inline for (.{ "member", "change", "state", "kind", "note_time", "path", "methods", "text", "thread" }) |key|
+        inline for (.{ "member", "change", "state", "kind", "note_time", "path", "methods", "text", "thread", "notices" }) |key|
             try testing.expect(v.object.get(key) != null);
+        if (n == 0) {
+            const thread = v.object.get("thread").?.array.items;
+            try testing.expectEqual(top.thread.len, thread.len);
+            try testing.expect(thread.len > 0);
+            inline for (.{ "path", "kind", "note_time", "text" }) |key|
+                try testing.expect(thread[0].object.get(key) != null);
+        }
     }
     try testing.expectEqual(o.results.len, n);
 }
@@ -509,11 +667,13 @@ test "query: model unavailable gives lexical results and says semantic search wa
     }
     try testing.expectEqual(@as(usize, 1), o.notices.len);
     try testing.expect(std.mem.startsWith(u8, o.notices[0], "semantic search skipped: the embedding model failed (ModelLoadFailed)"));
+    try expectJsonNotices(&f, o);
 
     // Another model's index: skipped, naming the rebuild.
     const other = try queryIn(&f, "", .{ .text = "retry policy", .provider = stub.provider(), .model_url = "test://other" });
     try testing.expect(other.results.len > 0);
     try testing.expect(std.mem.indexOf(u8, other.notices[0], index.rebuild_command) != null);
+    try expectJsonNotices(&f, other);
 }
 
 test "query: a stale index is used with a notice counting the unindexed files" {
@@ -528,6 +688,138 @@ test "query: a stale index is used with a notice counting the unindexed files" {
     try testing.expect(o.results.len > 0);
     try testing.expectEqual(@as(usize, 1), o.notices.len);
     try testing.expectEqualStrings("2 files changed since the last update are not indexed yet; run: devlog-index update", o.notices[0]);
+    try expectJsonNotices(&f, o);
+}
+
+test "Refs.of: stem, time, and the section only for a section-N-done note" {
+    const d = Refs.of("/w/a/devlog/20260310-1015-decision-retry-policy.md").?;
+    try testing.expectEqualStrings("20260310-1015-decision-retry-policy", d.stem);
+    try testing.expectEqualStrings("1015", d.time);
+    try testing.expect(d.section == null);
+    try testing.expectEqualStrings("12", Refs.of("20260311-1400-section-12-done.md").?.section.?);
+    try testing.expectEqualStrings("1", Refs.of("20260311-1400-section-1-done-retry.md").?.section.?);
+    try testing.expect(Refs.of("20260310-0900-section-1-start.md").?.section == null);
+    try testing.expect(Refs.of("20260310-0900-section-1-doneish.md").?.section == null);
+    try testing.expect(Refs.of("DEVLOG.md") == null);
+    try testing.expect(Refs.of("2026031x-0900-note.md") == null);
+    try testing.expect(Refs.of("20260310-0900-.md") == null);
+}
+
+test "Refs.foundIn: each reference form, and near misses" {
+    const d = Refs.of("20260310-1015-decision-retry-policy.md").?;
+    try testing.expect(d.foundIn("as decided in 20260310-1015-decision-retry-policy: fixed"));
+    try testing.expect(d.foundIn("see devlog/20260310-1015-decision-retry-policy.md."));
+    try testing.expect(d.foundIn("reverses the 1015 note's decision"));
+    try testing.expect(d.foundIn("the 1015\nNote said"));
+    try testing.expect(d.foundIn("per note 1015, retry"));
+    try testing.expect(!d.foundIn("20260310-1015-decision-retry-policy-v2 replaces it"));
+    try testing.expect(!d.foundIn("the 1015 notebook"));
+    try testing.expect(!d.foundIn("the 10150 note"));
+    try testing.expect(!d.foundIn("at 1015 we met"));
+    try testing.expect(!d.foundIn("the §1-done note"));
+
+    const s = Refs.of("20260311-1400-section-1-done.md").?;
+    try testing.expect(s.foundIn("Looked back over the §1-done note"));
+    try testing.expect(s.foundIn("Section 1 done still holds"));
+    try testing.expect(s.foundIn("since section  1\ndone,"));
+    try testing.expect(!s.foundIn("the §10-done note"));
+    try testing.expect(!s.foundIn("§1 tasks"));
+    try testing.expect(!s.foundIn("section 11 done"));
+    try testing.expect(!s.foundIn("subsection 1 done"));
+    try testing.expect(!s.foundIn("section 1 doneness"));
+    try testing.expect(!Refs.of("20260310-0900-section-1-start.md").?.foundIn("§1-done and section 1 done"));
+}
+
+/// The result from the note whose path ends with `name`.
+fn resultFor(o: Outcome, name: []const u8) !Result {
+    for (o.results) |r| if (std.mem.endsWith(u8, r.path, name)) return r;
+    std.debug.print("no result from {s}\n", .{name});
+    return error.TestExpectedResult;
+}
+
+fn expectThread(r: Result, names: []const []const u8) !void {
+    try testing.expectEqual(names.len, r.thread.len);
+    for (r.thread, names) |t, name| try testing.expect(std.mem.endsWith(u8, t.path, name));
+}
+
+/// A query matching every fixture note.
+fn everything(f: *testutil.Fixture, stub: *testutil.Stub) !Outcome {
+    return queryIn(f, "", .{ .text = "retry credentials section review answer api cache", .k = max_k, .provider = stub.provider(), .model_url = "test://stub" });
+}
+
+test "thread: later notes in the same change, by filename, time and section, in time order" {
+    var f = try testutil.Fixture.init();
+    defer f.deinit();
+    var stub: testutil.Stub = .{};
+    _ = try f.update("", &stub, false);
+    const o = try everything(&f, &stub);
+
+    // By filename (with and without .md); beta's mentions are another change.
+    const policy = try resultFor(o, "20260310-1015-decision-retry-policy.md");
+    try expectThread(policy, &.{ "20260311-1400-section-1-done.md", "20260313-1030-decision-retry-reversal.md" });
+    try testing.expectEqualStrings("section", policy.thread[0].kind);
+    try testing.expectEqualStrings("2026-03-11 14:00", policy.thread[0].note_time.?);
+    try testing.expect(std.mem.indexOf(u8, policy.thread[0].text, "Retry landed as decided in") != null);
+    try testing.expect(std.mem.indexOf(u8, policy.thread[1].text, "Reverses the policy") != null);
+    try expectThread(try resultFor(o, "20260313-1030-decision-retry-reversal.md"), &.{"20260314-0900-review-section-1.md"});
+
+    // By time next to "note".
+    try expectThread(try resultFor(o, "20260312-0915-stopped-2-1-needs-credentials.md"), &.{"20260312-1100-answer-credentials.md"});
+
+    // By section, onto the section-done note only.
+    try expectThread(try resultFor(o, "20260311-1400-section-1-done.md"), &.{"20260314-0900-review-section-1.md"});
+    try expectThread(try resultFor(o, "20260310-0900-section-1-start.md"), &.{});
+
+    // Nothing later refers to these; beta's own notes thread nothing from alpha.
+    try expectThread(try resultFor(o, "20260314-0900-review-section-1.md"), &.{});
+    try expectThread(try resultFor(o, "20260320-1200-change-done.md"), &.{});
+}
+
+test "thread: a same-time mention in another change is not threaded" {
+    var f = try testutil.Fixture.init();
+    defer f.deinit();
+    // A later note in alpha's active change names the archived note by time and by filename.
+    try f.write("alpha/openspec/changes/add-cache/devlog/20260402-0900-decision-token-retry.md",
+        \\# Decision: token retry
+        \\
+        \\As the 1015 note said, and as 20260310-1015-decision-retry-policy.md records, retry 503s.
+        \\
+    );
+    var stub: testutil.Stub = .{};
+    _ = try f.update("", &stub, false);
+    const o = try everything(&f, &stub);
+    try expectThread(try resultFor(o, "20260310-1015-decision-retry-policy.md"), &.{ "20260311-1400-section-1-done.md", "20260313-1030-decision-retry-reversal.md" });
+}
+
+test "thread: text output shows entries under their result, marked as later notes" {
+    var f = try testutil.Fixture.init();
+    defer f.deinit();
+    var stub: testutil.Stub = .{};
+    _ = try f.update("", &stub, false);
+    const o = try everything(&f, &stub);
+    const r = try resultFor(o, "20260312-0915-stopped-2-1-needs-credentials.md");
+
+    var buf: Io.Writer.Allocating = .init(f.arena());
+    try writeText(&.{r}, &buf.writer);
+    const text = buf.written();
+    const entry = std.mem.indexOf(u8, text, "\n   ↳ later note · 2026-03-12 11:00 · answer\n     /") orelse return error.TestExpectedThreadEntry;
+    try testing.expect(entry > std.mem.indexOf(u8, text, "no test credentials").?);
+    try testing.expect(std.mem.indexOf(u8, text[entry..], "\n     Emmz answered the question in the 0915 note") != null);
+}
+
+/// Every `--json` line carries the outcome's notices.
+fn expectJsonNotices(f: *testutil.Fixture, o: Outcome) !void {
+    var buf: Io.Writer.Allocating = .init(f.arena());
+    try writeJson(o.results, &buf.writer);
+    var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, buf.written(), "\n"), '\n');
+    var n: usize = 0;
+    while (lines.next()) |line| : (n += 1) {
+        const v = try std.json.parseFromSliceLeaky(std.json.Value, f.arena(), line, .{});
+        const got = v.object.get("notices").?.array.items;
+        try testing.expectEqual(o.notices.len, got.len);
+        for (o.notices, got) |want, g| try testing.expectEqualStrings(want, g.string);
+    }
+    try testing.expectEqual(o.results.len, n);
 }
 
 test "query with the real model: a concept found without shared words (DEVLOG_INDEX_TEST_MODEL)" {
