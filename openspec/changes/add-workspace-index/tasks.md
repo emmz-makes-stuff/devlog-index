@@ -104,3 +104,8 @@
 
 - [x] 18.1 One helper, shared by `freshness.detect` and `update.takeSnapshot`, loads the indexed `files` rows, lists missing members, and decides whether a file is unchanged (size and mtime match a well-formed hash) or vanished; both callers use it, and their existing tests still pass unchanged
 - [x] 18.2 `passages_fts` becomes an external-content FTS5 table over `passages` (`content='passages'`, `content_rowid='id'`, same tokenizer), with deletes through the FTS `'delete'` command; `schema_version` goes to `2`, so an old index is refused with the rebuild message; test that lexical ranking is unchanged on the fixture and that a version-1 index is refused; verify `make gates`
+
+## 19. Review fixes: design wording and FTS test
+
+- [x] 19.1 design.md D8 says a note from the same minute as the result counts as later (filenames cannot order notes within a minute), matching §17.3
+- [x] 19.2 The re-chunk test's `count(passages_fts) == count(passages)` check, always true with external content, becomes an FTS5 `integrity-check`; verify `make gates`

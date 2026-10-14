@@ -647,9 +647,10 @@ test "update: first run indexes the fixture; nothing changed computes no embeddi
     try testing.expectEqual(first.passages_total, first.passages_embedded + first.passages_reused);
     try testing.expectEqual(@as(usize, 1), stub.loads);
 
-    // Every passage has its FTS row and its vector.
+    // Every passage has its FTS entry (the index matches `passages`: a count
+    // of the external-content table would only count `passages`) and its vector.
     const n: i64 = @intCast(first.passages_total);
-    try testing.expectEqual(n, try f.count("SELECT count(*) FROM passages_fts"));
+    try f.exec("INSERT INTO passages_fts(passages_fts, rank) VALUES ('integrity-check', 1)");
     try testing.expectEqual(n, try f.count("SELECT count(*) FROM passages_vec"));
     try testing.expectEqual(@as(i64, 0), try f.count("SELECT count(*) FROM passages WHERE text LIKE '%-MARKER%' AND text NOT LIKE '%ACTIVE-DELTA-MARKER%'"));
     try testing.expectEqual(@as(i64, 1), try f.count(
@@ -725,7 +726,7 @@ test "update: a changed file is re-chunked, reusing vectors of unchanged passage
     try testing.expectEqual(@as(usize, 3), r.passages_reused);
     try testing.expectEqual(@as(i64, 4), try f.count("SELECT count(*) FROM passages p JOIN files f ON f.id = p.file_id WHERE f.rel LIKE '%add-retry/design.md'"));
     try testing.expectEqual(try f.count("SELECT count(*) FROM passages"), try f.count("SELECT count(*) FROM passages_vec"));
-    try testing.expectEqual(try f.count("SELECT count(*) FROM passages"), try f.count("SELECT count(*) FROM passages_fts"));
+    try f.exec("INSERT INTO passages_fts(passages_fts, rank) VALUES ('integrity-check', 1)");
 }
 
 test "update: the FTS index keeps no copy of the text and stays consistent through edits and removals" {
