@@ -96,9 +96,9 @@
 
 ## 17. Review fixes: chunking and threads
 
-- [ ] 17.1 Fence tracking records the opening fence's character (and length) and closes only on a matching fence, per CommonMark, so a `~~~` line inside a ```` ``` ```` block (and the reverse) stays inside the block; test in a note and in a design section
-- [ ] 17.2 A comment that closes on the same line it opens keeps the text after `-->` (and a multi-line comment keeps the text after its closing `-->`); test `<!-- Section: 3 --> Decided …` and a multi-line comment
-- [ ] 17.3 Thread expansion includes later notes written in the same minute as the result note, ordering by (note time, path) and excluding the result itself; test a stopped note and an answer that share a minute; verify `make gates`
+- [x] 17.1 Fence tracking records the opening fence's character (and length) and closes only on a matching fence, per CommonMark, so a `~~~` line inside a ```` ``` ```` block (and the reverse) stays inside the block; test in a note and in a design section
+- [x] 17.2 A comment that closes on the same line it opens keeps the text after `-->` (and a multi-line comment keeps the text after its closing `-->`); test `<!-- Section: 3 --> Decided …` and a multi-line comment
+- [x] 17.3 Thread expansion includes later notes written in the same minute as the result note, ordering by (note time, path) and excluding the result itself; test a stopped note and an answer that share a minute; verify `make gates`
 
 ## 18. Review fixes: shared change detection and FTS storage
 

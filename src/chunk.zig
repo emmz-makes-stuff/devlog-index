@@ -101,13 +101,26 @@ pub fn passages(arena: Allocator, src: sources.Source, text: []const u8) Allocat
 /// Lines with trailing `\r` removed, tracking whether each is inside a fenced
 /// code block (fence lines themselves count as inside) or an HTML comment
 /// (from a line starting `<!--` outside a fence to the line holding `-->`).
-/// Everything inside a comment is comment, fences included.
+/// Everything inside a comment is comment, fences included. Text after the
+/// closing `-->` is the line's `body`, read like any line. A fence closes
+/// only on a run of its own character at least as long as the opening one,
+/// with nothing after it (CommonMark).
 const Lines = struct {
     it: std.mem.SplitIterator(u8, .scalar),
-    in_fence: bool = false,
+    fence: ?Fence = null,
     in_comment: bool = false,
 
-    const Line = struct { text: []const u8, fenced: bool, comment: bool = false };
+    const Line = struct {
+        /// The whole line.
+        text: []const u8,
+        /// The line without a comment that closes on it: what follows `-->`.
+        /// Equal to `text` on a line with no comment.
+        body: []const u8,
+        fenced: bool,
+        /// The whole line is comment.
+        comment: bool = false,
+    };
+    const Fence = struct { char: u8, len: usize };
 
     fn init(text: []const u8) Lines {
         return .{ .it = std.mem.splitScalar(u8, text, '\n') };
@@ -116,20 +129,39 @@ const Lines = struct {
     fn next(l: *Lines) ?Line {
         const raw = l.it.next() orelse return null;
         const line = std.mem.trimEnd(u8, raw, "\r");
+        var out = l.read(line);
+        out.text = line;
+        return out;
+    }
+
+    fn read(l: *Lines, s: []const u8) Line {
         if (l.in_comment) {
-            if (std.mem.indexOf(u8, line, "-->") != null) l.in_comment = false;
-            return .{ .text = line, .fenced = false, .comment = true };
+            const end = std.mem.indexOf(u8, s, "-->") orelse return .{ .text = s, .body = "", .fenced = false, .comment = true };
+            l.in_comment = false;
+            const rest = std.mem.trimStart(u8, s[end + "-->".len ..], " \t");
+            if (rest.len == 0) return .{ .text = s, .body = "", .fenced = false, .comment = true };
+            return l.read(rest);
         }
-        const trimmed = std.mem.trimStart(u8, line, " \t");
-        if (!l.in_fence and std.mem.startsWith(u8, trimmed, "<!--")) {
-            l.in_comment = std.mem.indexOf(u8, trimmed["<!--".len..], "-->") == null;
-            return .{ .text = line, .fenced = false, .comment = true };
+        const trimmed = std.mem.trimStart(u8, s, " \t");
+        if (l.fence == null and std.mem.startsWith(u8, trimmed, "<!--")) {
+            l.in_comment = true;
+            return l.read(trimmed["<!--".len..]);
         }
-        if (std.mem.startsWith(u8, trimmed, "```") or std.mem.startsWith(u8, trimmed, "~~~")) {
-            l.in_fence = !l.in_fence;
-            return .{ .text = line, .fenced = true };
+        if (fenceRun(trimmed)) |run| {
+            if (l.fence) |open| {
+                if (run.char == open.char and run.len >= open.len and isBlank(trimmed[run.len..])) l.fence = null;
+            } else l.fence = run;
+            return .{ .text = s, .body = s, .fenced = true };
         }
-        return .{ .text = line, .fenced = l.in_fence };
+        return .{ .text = s, .body = s, .fenced = l.fence != null };
+    }
+
+    /// Three or more backticks or tildes at the start of `s`.
+    fn fenceRun(s: []const u8) ?Fence {
+        if (s.len == 0 or (s[0] != '`' and s[0] != '~')) return null;
+        var n: usize = 0;
+        while (n < s.len and s[n] == s[0]) n += 1;
+        return if (n >= 3) .{ .char = s[0], .len = n } else null;
     }
 };
 
@@ -140,8 +172,8 @@ fn isBlank(s: []const u8) bool {
 fn headingLevel(line: Lines.Line) usize {
     if (line.fenced or line.comment) return 0;
     var n: usize = 0;
-    while (n < line.text.len and line.text[n] == '#') n += 1;
-    if (n == 0 or n >= line.text.len or line.text[n] != ' ') return 0;
+    while (n < line.body.len and line.body[n] == '#') n += 1;
+    if (n == 0 or n >= line.body.len or line.body[n] != ' ') return 0;
     return n;
 }
 
@@ -162,16 +194,16 @@ pub fn chunkNote(arena: Allocator, text: []const u8) Allocator.Error!Chunked {
         if (line.comment) continue;
         if (!line.fenced) {
             if (title == null and headingLevel(line) == 1) {
-                title = std.mem.trim(u8, line.text[2..], " \t");
+                title = std.mem.trim(u8, line.body[2..], " \t");
                 continue;
             }
-            if (isBlank(line.text)) {
+            if (isBlank(line.body)) {
                 try flushParagraph(arena, &paragraphs, &para);
                 continue;
             }
         }
         if (para.items.len > 0) try para.append(arena, '\n');
-        try para.appendSlice(arena, line.text);
+        try para.appendSlice(arena, line.body);
     }
     try flushParagraph(arena, &paragraphs, &para);
 
@@ -213,7 +245,7 @@ pub fn chunkSpec(arena: Allocator, prefix: []const u8, text: []const u8) Allocat
         const level = headingLevel(line);
         if (level == 2 or level == 3) {
             try flushBlock(arena, &out, prefix, &block, keeping);
-            const heading = std.mem.trim(u8, line.text[level + 1 ..], " \t");
+            const heading = std.mem.trim(u8, line.body[level + 1 ..], " \t");
             keeping = (level == 2 and std.ascii.eqlIgnoreCase(heading, "Purpose")) or
                 (level == 3 and std.mem.startsWith(u8, heading, "Requirement:"));
         }
@@ -411,6 +443,72 @@ test "chunkSections: a fence inside a comment does not swallow the next heading"
     );
     try testing.expectEqual(@as(usize, 2), out.len);
     try testing.expect(std.mem.indexOf(u8, out[1], "## B") != null);
+}
+
+test "chunkNote: a fence closes only on its own character, at least as long" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const out = (try chunkNote(arena,
+        \\# T
+        \\````md
+        \\~~~
+        \\
+        \\```
+        \\
+        \\# not the title
+        \\````
+        \\After.
+    )).passages;
+    try testing.expectEqual(@as(usize, 1), out.len);
+    try testing.expectEqualStrings("T\n\n````md\n~~~\n\n```\n\n# not the title\n````\nAfter.", out[0]);
+}
+
+test "chunkSections: a ~~~ line inside a ``` block does not end it" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const out = try chunkSections(arena, "x design",
+        \\# Design
+        \\## A
+        \\```
+        \\~~~
+        \\## inside the code block
+        \\```
+        \\Alpha.
+        \\## B
+        \\Beta.
+    );
+    try testing.expectEqual(@as(usize, 2), out.len);
+    try testing.expect(std.mem.indexOf(u8, out[0], "## inside the code block") != null);
+    try testing.expect(std.mem.indexOf(u8, out[1], "## B") != null);
+}
+
+test "chunkNote: text after a comment's closing --> is kept" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const one_line = (try chunkNote(arena,
+        \\# T
+        \\<!-- Section: 3 --> Decided to keep the cache TTL at 60s.
+    )).passages;
+    try testing.expectEqual(@as(usize, 1), one_line.len);
+    try testing.expectEqualStrings("T\n\nDecided to keep the cache TTL at 60s.", one_line[0]);
+
+    const multi = (try chunkNote(arena,
+        \\# T
+        \\<!-- a draft
+        \\still the draft --> Kept after the comment.
+        \\Next line.
+    )).passages;
+    try testing.expectEqual(@as(usize, 1), multi.len);
+    try testing.expectEqualStrings("T\n\nKept after the comment.\nNext line.", multi[0]);
+
+    // Sections keep the whole line, comment included, as before.
+    const sections = try chunkSections(arena, "x design", "## A\n<!-- why --> Alpha.\n");
+    try testing.expect(std.mem.indexOf(u8, sections[0], "<!-- why --> Alpha.") != null);
 }
 
 test "chunkSpec: purpose plus one passage per requirement with scenarios" {

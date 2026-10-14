@@ -336,7 +336,7 @@ fn load(arena: Allocator, db: dbm.Db, hits: []const Hit) !Loaded {
     defer s.finalize();
     var later = try db.prepare(
         \\SELECT f.path, f.kind, f.note_time, p.text FROM files f JOIN passages p ON p.file_id = f.id
-        \\WHERE f.member = ? AND f.change = ? AND f.archived = ? AND f.note_time > ?
+        \\WHERE f.member = ? AND f.change = ? AND f.archived = ? AND f.note_time >= ? AND f.path <> ?
         \\ORDER BY f.note_time, f.path, p.ordinal
     );
     defer later.finalize();
@@ -383,6 +383,8 @@ fn threadOf(arena: Allocator, later: dbm.Stmt, r: Result) ![]const ThreadEntry {
     try later.bindText(2, change);
     try later.bindInt(3, @intFromBool(std.mem.eql(u8, r.state, "archived")));
     try later.bindText(4, time);
+    // A note from the same minute counts as later: filenames cannot order it.
+    try later.bindText(5, r.path);
     var out: std.ArrayList(ThreadEntry) = .empty;
     while (try later.step()) {
         const passage = later.text(3);
@@ -886,6 +888,21 @@ fn expectThread(r: Result, names: []const []const u8) !void {
 /// A query matching every fixture note.
 fn everything(f: *testutil.Fixture, stub: *testutil.Stub) !Outcome {
     return queryIn(f, "", .{ .text = "retry credentials section review answer api cache", .k = max_k, .provider = stub.provider(), .model_url = "test://stub" });
+}
+
+test "thread: a note from the same minute that refers back is a thread entry" {
+    var f = try testutil.Fixture.init();
+    defer f.deinit();
+    // "answer" sorts before "stopped", so path order cannot stand for time.
+    try f.write("alpha/openspec/changes/add-cache/devlog/20260402-0900-stopped-3-1-quota.md", "# Stopped: quota\n\nThe zanzibar quota is unknown; asking Emmz.\n");
+    try f.write("alpha/openspec/changes/add-cache/devlog/20260402-0900-answer-quota.md", "# Answer: quota\n\nAnswers the 0900 note: the zanzibar quota is 50.\n");
+    var stub: testutil.Stub = .{};
+    _ = try f.update("", &stub, false);
+    const o = try queryIn(&f, "", .{ .text = "zanzibar quota", .k = max_k, .provider = stub.provider(), .model_url = "test://stub" });
+
+    try expectThread(try resultFor(o, "20260402-0900-stopped-3-1-quota.md"), &.{"20260402-0900-answer-quota.md"});
+    // The answer names its own minute, but is not its own thread entry.
+    try expectThread(try resultFor(o, "20260402-0900-answer-quota.md"), &.{});
 }
 
 test "thread: later notes in the same change, by filename, time and section, in time order" {
