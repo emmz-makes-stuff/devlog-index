@@ -182,19 +182,12 @@ fn deleteDbFiles(arena: Allocator, io: Io, path: []const u8) void {
     }
 }
 
-const Existing = struct {
-    id: i64,
-    hash: []const u8,
-    size: i64,
-    mtime_ns: i64,
-    seen: bool = false,
-};
+const Existing = freshness.Indexed;
 
 fn updateAt(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, opts: Options, path: [:0]const u8, diag: *Diag) !Report {
     var report: Report = .{};
 
-    var missing: std.ArrayList(workspace.Member) = .empty;
-    for (ws.members) |m| if (m.status != .ok) try missing.append(arena, m);
+    const missing = try freshness.missingMembers(arena, ws);
 
     var idiag: index.Diag = .{};
     var ix = index.Index.open(arena, path, opts.model_url, &idiag) catch |err| switch (err) {
@@ -213,19 +206,7 @@ fn updateAt(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
     errdefer db.exec("ROLLBACK") catch {};
 
     // What the index holds now.
-    var existing: std.StringHashMapUnmanaged(Existing) = .empty;
-    {
-        var s = try db.prepare("SELECT id, path, hash, size, mtime_ns FROM files");
-        defer s.finalize();
-        while (try s.step()) {
-            try existing.put(arena, try arena.dupe(u8, s.text(1)), .{
-                .id = s.int(0),
-                .hash = try arena.dupe(u8, s.text(2)),
-                .size = s.int(3),
-                .mtime_ns = s.int(4),
-            });
-        }
-    }
+    var existing = try freshness.loadIndexed(arena, db);
 
     // Snapshot every source before the (slow) embedding starts, so a live
     // workspace has only a short window to change under us.
@@ -283,12 +264,9 @@ fn updateAt(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
         }
     }
 
-    // Removed files: not found this time, and not under a member that is
-    // missing right now.
     var it = existing.iterator();
     while (it.next()) |entry| {
-        if (entry.value_ptr.seen) continue;
-        if (freshness.underMissingMember(entry.key_ptr.*, missing.items)) continue;
+        if (!freshness.gone(entry.key_ptr.*, entry.value_ptr.*, missing)) continue;
         report.removed += 1;
         try w.collectPassages(entry.value_ptr.id, &stale_passages);
         try w.deleteFile(entry.value_ptr.id);
@@ -315,39 +293,18 @@ const Snap = struct {
     chunked: ?chunk.Chunked = null,
 };
 
-/// Stat, read and hash every source. A file whose size and mtime match its
-/// `existing` row is not read; it keeps the recorded hash, as freshness
-/// decides. A file that vanished since discovery is left out, as if it had
-/// not been found (so an indexed copy is removed). The stat comes before the
-/// read: if the file changes in between, the recorded mtime is older than
-/// the content, so the next freshness check re-hashes it rather than missing
-/// the change.
-fn takeSnapshot(arena: Allocator, io: Io, srcs: []const sources.Source, existing: *const std.StringHashMapUnmanaged(Existing), diag: *Diag) ![]Snap {
-    const cwd = Io.Dir.cwd();
+/// Stat, read and hash every source (`freshness.current`), so update and
+/// freshness agree on what changed. A file whose size and mtime match its
+/// `existing` row is not read. A file that vanished since discovery is left
+/// out, as if it had not been found (so an indexed copy is removed).
+fn takeSnapshot(arena: Allocator, io: Io, srcs: []const sources.Source, existing: *const freshness.IndexedMap, diag: *Diag) ![]Snap {
     var out: std.ArrayList(Snap) = .empty;
     for (srcs) |src| {
-        const st = cwd.statFile(io, src.path, .{}) catch |err| switch (err) {
-            error.FileNotFound, error.NotDir => continue,
-            else => return readFailed(arena, diag, src.path, err),
-        };
-        const size: i64 = @intCast(st.size);
-        const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
-        if (existing.get(src.path)) |old| if (old.size == size and old.mtime_ns == mtime_ns and old.hash.len == 64) {
-            try out.append(arena, .{ .src = src, .text = null, .hash = old.hash[0..64].*, .size = size, .mtime_ns = mtime_ns });
-            continue;
-        };
-        const text = cwd.readFileAlloc(io, src.path, arena, .unlimited) catch |err| switch (err) {
-            error.FileNotFound, error.NotDir => continue,
+        const now = (freshness.current(arena, io, src.path, existing.get(src.path)) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return readFailed(arena, diag, src.path, err),
-        };
-        try out.append(arena, .{
-            .src = src,
-            .text = text,
-            .hash = hashHex(text),
-            .size = size,
-            .mtime_ns = mtime_ns,
-        });
+        }) orelse continue;
+        try out.append(arena, .{ .src = src, .text = now.text, .hash = now.hash, .size = now.size, .mtime_ns = now.mtime_ns });
     }
     return out.items;
 }
@@ -417,7 +374,9 @@ const Writer = struct {
             .insert_fts = try db.prepare("INSERT INTO passages_fts(rowid, text) VALUES (?, ?)"),
             .find_by_hash = try db.prepare("SELECT id FROM passages WHERE text_hash = ? LIMIT 1"),
             .delete_passage = try db.prepare("DELETE FROM passages WHERE id = ?"),
-            .delete_fts = try db.prepare("DELETE FROM passages_fts WHERE rowid = ?"),
+            // External content: the index entry is removed with the text it was
+            // built from, so this runs before the passage row is deleted.
+            .delete_fts = try db.prepare("INSERT INTO passages_fts(passages_fts, rowid, text) SELECT 'delete', id, text FROM passages WHERE id = ?"),
         };
         if (ix.dim != null) try w.prepareVec();
         return w;
@@ -767,6 +726,27 @@ test "update: a changed file is re-chunked, reusing vectors of unchanged passage
     try testing.expectEqual(@as(i64, 4), try f.count("SELECT count(*) FROM passages p JOIN files f ON f.id = p.file_id WHERE f.rel LIKE '%add-retry/design.md'"));
     try testing.expectEqual(try f.count("SELECT count(*) FROM passages"), try f.count("SELECT count(*) FROM passages_vec"));
     try testing.expectEqual(try f.count("SELECT count(*) FROM passages"), try f.count("SELECT count(*) FROM passages_fts"));
+}
+
+test "update: the FTS index keeps no copy of the text and stays consistent through edits and removals" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var stub: Stub = .{};
+    _ = try f.update("", &stub, false);
+    // External content: no `_content` shadow table holding the text again.
+    try testing.expectEqual(@as(i64, 0), try f.count("SELECT count(*) FROM sqlite_schema WHERE name = 'passages_fts_content'"));
+
+    const old_word = "SELECT count(*) FROM passages_fts WHERE passages_fts MATCH '\"thundering\"'";
+    try testing.expect(try f.count(old_word) > 0);
+    try f.write("alpha/openspec/changes/archive/2026-03-10-add-retry/devlog/20260310-1015-decision-retry-policy.md", "# Retry policy\n\nRewritten: zorbulon backoff.\n");
+    try f.tmp.dir.deleteFile(testing.io, "alpha/openspec/changes/archive/2026-03-10-add-retry/devlog/20260313-1030-decision-retry-reversal.md");
+    const r = try f.update("", &stub, false);
+    try testing.expectEqual(@as(usize, 1), r.changed);
+    try testing.expectEqual(@as(usize, 1), r.removed);
+
+    try f.exec("INSERT INTO passages_fts(passages_fts, rank) VALUES ('integrity-check', 1)");
+    try testing.expectEqual(@as(i64, 1), try f.count("SELECT count(*) FROM passages_fts WHERE passages_fts MATCH '\"zorbulon\"'"));
+    try testing.expectEqual(@as(i64, 0), try f.count(old_word));
 }
 
 test "update: archiving a change marks its passages archived and drops its spec delta" {

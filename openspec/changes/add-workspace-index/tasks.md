@@ -102,5 +102,5 @@
 
 ## 18. Review fixes: shared change detection and FTS storage
 
-- [ ] 18.1 One helper, shared by `freshness.detect` and `update.takeSnapshot`, loads the indexed `files` rows, lists missing members, and decides whether a file is unchanged (size and mtime match a well-formed hash) or vanished; both callers use it, and their existing tests still pass unchanged
-- [ ] 18.2 `passages_fts` becomes an external-content FTS5 table over `passages` (`content='passages'`, `content_rowid='id'`, same tokenizer), with deletes through the FTS `'delete'` command; `schema_version` goes to `2`, so an old index is refused with the rebuild message; test that lexical ranking is unchanged on the fixture and that a version-1 index is refused; verify `make gates`
+- [x] 18.1 One helper, shared by `freshness.detect` and `update.takeSnapshot`, loads the indexed `files` rows, lists missing members, and decides whether a file is unchanged (size and mtime match a well-formed hash) or vanished; both callers use it, and their existing tests still pass unchanged
+- [x] 18.2 `passages_fts` becomes an external-content FTS5 table over `passages` (`content='passages'`, `content_rowid='id'`, same tokenizer), with deletes through the FTS `'delete'` command; `schema_version` goes to `2`, so an old index is refused with the rebuild message; test that lexical ranking is unchanged on the fixture and that a version-1 index is refused; verify `make gates`

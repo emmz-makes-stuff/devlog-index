@@ -26,69 +26,113 @@ pub const Changes = struct {
     }
 };
 
-const Indexed = struct {
-    hash: []const u8,
-    size: i64,
-    mtime_ns: i64,
-    seen: bool = false,
-};
-
 pub const Diag = struct {
     message: []const u8 = "",
 };
+
+// ---- change detection, shared with `update` ----
+
+/// A `files` row: what the index recorded for one path.
+pub const Indexed = struct {
+    id: i64,
+    hash: []const u8,
+    size: i64,
+    mtime_ns: i64,
+    /// Set by the caller when the path was found this time.
+    seen: bool = false,
+};
+
+pub const IndexedMap = std.StringHashMapUnmanaged(Indexed);
+
+/// Every `files` row, by path.
+pub fn loadIndexed(arena: Allocator, db: dbm.Db) !IndexedMap {
+    var out: IndexedMap = .empty;
+    var s = try db.prepare("SELECT id, path, hash, size, mtime_ns FROM files");
+    defer s.finalize();
+    while (try s.step()) {
+        try out.put(arena, try arena.dupe(u8, s.text(1)), .{
+            .id = s.int(0),
+            .hash = try arena.dupe(u8, s.text(2)),
+            .size = s.int(3),
+            .mtime_ns = s.int(4),
+        });
+    }
+    return out;
+}
+
+/// The members missing right now; files under them are kept, not removed.
+pub fn missingMembers(arena: Allocator, ws: workspace.Workspace) Allocator.Error![]const workspace.Member {
+    var out: std.ArrayList(workspace.Member) = .empty;
+    for (ws.members) |m| if (m.status != .ok) try out.append(arena, m);
+    return out.items;
+}
+
+/// Whether an indexed path counts as removed: not found this time, and not
+/// under a member that is missing right now.
+pub fn gone(path: []const u8, row: Indexed, missing: []const workspace.Member) bool {
+    return !row.seen and !underMissingMember(path, missing);
+}
+
+/// A source file as it is now.
+pub const Current = struct {
+    /// Null when the file was not read: unchanged by size and mtime.
+    text: ?[]const u8,
+    hash: [64]u8,
+    size: i64,
+    mtime_ns: i64,
+};
+
+/// Stat `path` and, unless its size and mtime match `old` (with a
+/// well-formed hash, which it keeps), read and hash it. Null when the file
+/// vanished since discovery (`FileNotFound`/`NotDir`). Any other error is
+/// returned for the caller to name the file. The stat comes before the
+/// read: if the file changes in between, the recorded mtime is older than
+/// the content, so the next check re-hashes it rather than missing the
+/// change.
+pub fn current(arena: Allocator, io: Io, path: []const u8, old: ?Indexed) !?Current {
+    const cwd = Io.Dir.cwd();
+    const st = cwd.statFile(io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return null,
+        else => |e| return e,
+    };
+    const size: i64 = @intCast(st.size);
+    const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
+    if (old) |o| if (o.size == size and o.mtime_ns == mtime_ns and o.hash.len == 64)
+        return .{ .text = null, .hash = o.hash[0..64].*, .size = size, .mtime_ns = mtime_ns };
+    const text = cwd.readFileAlloc(io, path, arena, .unlimited) catch |err| switch (err) {
+        error.FileNotFound, error.NotDir => return null,
+        else => |e| return e,
+    };
+    return .{ .text = text, .hash = update.hashHex(text), .size = size, .mtime_ns = mtime_ns };
+}
+
+// ---- freshness ----
 
 /// Compare the workspace's sources with the index's `files` table. With no
 /// index (`db` null) every source counts as added. A file that cannot be
 /// read is `error.ReadFailed`, with `diag.message` naming it.
 pub fn detect(arena: Allocator, io: Io, ws: workspace.Workspace, db: ?dbm.Db, diag: *Diag) !Changes {
-    var indexed: std.StringHashMapUnmanaged(Indexed) = .empty;
-    if (db) |d| {
-        var s = try d.prepare("SELECT path, hash, size, mtime_ns FROM files");
-        defer s.finalize();
-        while (try s.step()) {
-            try indexed.put(arena, try arena.dupe(u8, s.text(0)), .{
-                .hash = try arena.dupe(u8, s.text(1)),
-                .size = s.int(2),
-                .mtime_ns = s.int(3),
-            });
-        }
-    }
+    var indexed: IndexedMap = if (db) |d| try loadIndexed(arena, d) else .empty;
 
     var c: Changes = .{};
-    const cwd = Io.Dir.cwd();
     for (try sources.discover(arena, io, ws, null)) |src| {
         const old = indexed.getPtr(src.path) orelse {
             c.added += 1;
             continue;
         };
-        old.seen = true;
-        const st = cwd.statFile(io, src.path, .{}) catch |err| switch (err) {
-            // Gone since discovery: left unseen, so it counts as removed.
-            error.FileNotFound, error.NotDir => {
-                old.seen = false;
-                continue;
-            },
-            else => return readFailed(arena, diag, src.path, err),
-        };
-        if (st.size == old.size and st.mtime.nanoseconds == old.mtime_ns) continue;
-        const text = cwd.readFileAlloc(io, src.path, arena, .unlimited) catch |err| switch (err) {
-            error.FileNotFound, error.NotDir => {
-                old.seen = false;
-                continue;
-            },
+        // Gone since discovery: left unseen, so it counts as removed.
+        const now = (current(arena, io, src.path, old.*) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             else => return readFailed(arena, diag, src.path, err),
-        };
-        if (!std.mem.eql(u8, &update.hashHex(text), old.hash)) c.changed += 1;
+        }) orelse continue;
+        old.seen = true;
+        if (!std.mem.eql(u8, &now.hash, old.hash)) c.changed += 1;
     }
 
-    var missing: std.ArrayList(workspace.Member) = .empty;
-    for (ws.members) |m| if (m.status != .ok) try missing.append(arena, m);
+    const missing = try missingMembers(arena, ws);
     var it = indexed.iterator();
     while (it.next()) |entry| {
-        if (entry.value_ptr.seen) continue;
-        if (underMissingMember(entry.key_ptr.*, missing.items)) continue;
-        c.removed += 1;
+        if (gone(entry.key_ptr.*, entry.value_ptr.*, missing)) c.removed += 1;
     }
     return c;
 }

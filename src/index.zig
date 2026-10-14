@@ -7,6 +7,8 @@
 //! - `passages`: text per passage, with a text hash so unchanged passages
 //!   can reuse their vectors when a file moves or is edited.
 //! - `passages_fts`: FTS5 (porter) over passage text, rowid = passage id.
+//!   External content: the text lives only in `passages`, so a delete goes
+//!   through the FTS `'delete'` command with the old text.
 //! - `passages_vec`: vec0 cosine vectors, rowid = passage id. Created on the
 //!   first embedding, since the dimension comes from the loaded model.
 //!
@@ -18,7 +20,8 @@ const Allocator = std.mem.Allocator;
 const dbm = @import("db.zig");
 const Db = dbm.Db;
 
-pub const schema_version = "1";
+/// 2: `passages_fts` reads its text from `passages` (external content).
+pub const schema_version = "2";
 pub const db_basename = "index.db";
 pub const rebuild_command = "devlog-index update --rebuild";
 
@@ -59,7 +62,7 @@ const schema =
     \\);
     \\CREATE INDEX IF NOT EXISTS passages_file ON passages(file_id);
     \\CREATE INDEX IF NOT EXISTS passages_text_hash ON passages(text_hash);
-    \\CREATE VIRTUAL TABLE IF NOT EXISTS passages_fts USING fts5(text, tokenize = 'porter');
+    \\CREATE VIRTUAL TABLE IF NOT EXISTS passages_fts USING fts5(text, content = 'passages', content_rowid = 'id', tokenize = 'porter');
 ;
 
 pub const Index = struct {
@@ -271,4 +274,11 @@ test "the index is in WAL mode; openRead checks it exists and its schema" {
     w.close();
     try testing.expectError(error.SchemaMismatch, openRead(arena, testing.io, path, &diag));
     try testing.expect(std.mem.indexOf(u8, diag.message, rebuild_command) != null);
+
+    // An index from before external-content FTS (version 1) is refused too.
+    w = try Db.open(path, .read_write_create);
+    try w.exec("UPDATE settings SET value = '1' WHERE key = 'schema_version'");
+    w.close();
+    try testing.expectError(error.SchemaMismatch, openRead(arena, testing.io, path, &diag));
+    try testing.expect(std.mem.indexOf(u8, diag.message, "has index schema 1, this devlog-index uses 2") != null);
 }
