@@ -48,12 +48,11 @@ pub const Diag = struct {
 /// cached. A missing index is reported (`indexed` false, every source
 /// changed), not an error; an unreadable one is an error.
 pub fn gather(arena: Allocator, io: Io, ws: workspace.Workspace, model_path: []const u8, diag: *Diag) Error!Status {
-    return gatherInner(arena, io, ws, model_path, diag) catch |err| switch (err) {
-        error.OutOfMemory, error.StatusFailed => |e| return e,
-        else => {
+    return gatherInner(arena, io, ws, model_path, diag) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (diag.message.len == 0)
             diag.message = try std.fmt.allocPrint(arena, "status failed ({s})", .{@errorName(err)});
-            return error.StatusFailed;
-        },
+        return error.StatusFailed;
     };
 }
 
@@ -77,7 +76,10 @@ fn gatherInner(arena: Allocator, io: Io, ws: workspace.Workspace, model_path: []
         defer s.finalize();
         while (try s.step()) try counts.put(arena, try arena.dupe(u8, s.text(0)), @intCast(s.int(1)));
         if (try index.readSetting(arena, db, "last_update")) |v|
-            last_update = try isoUtc(arena, std.fmt.parseInt(i64, v, 10) catch return error.StatusFailed);
+            last_update = try isoUtc(arena, std.fmt.parseInt(i64, v, 10) catch {
+                diag.message = try std.fmt.allocPrint(arena, "the index's last_update setting is not a timestamp (\"{s}\"); rebuild it with: {s}", .{ v, index.rebuild_command });
+                return error.StatusFailed;
+            });
     }
 
     const members = try arena.alloc(Member, ws.members.len);
@@ -268,4 +270,17 @@ test "isoUtc" {
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();
     try testing.expectEqualStrings("2026-10-09T15:39:05Z", try isoUtc(arena_state.allocator(), 1791560345));
+}
+
+test "status: a corrupt last_update setting fails with a message naming the rebuild" {
+    var f = try testutil.Fixture.init();
+    defer f.deinit();
+    var stub: testutil.Stub = .{};
+    _ = try f.update("", &stub, false);
+    try f.exec("UPDATE settings SET value = 'soon' WHERE key = 'last_update'");
+    var wdiag: workspace.Diag = .{};
+    const ws = try workspace.resolve(f.arena(), testing.io, f.root, &wdiag);
+    var diag: Diag = .{};
+    try testing.expectError(error.StatusFailed, gather(f.arena(), testing.io, ws, "/nonexistent/model.gguf", &diag));
+    try testing.expectEqualStrings("the index's last_update setting is not a timestamp (\"soon\"); rebuild it with: " ++ index.rebuild_command, diag.message);
 }

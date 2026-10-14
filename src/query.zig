@@ -83,13 +83,11 @@ pub const Diag = struct {
 };
 
 pub fn run(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, opts: Options, diag: *Diag) Error!Outcome {
-    return runInner(arena, gpa, io, ws, opts, diag) catch |err| switch (err) {
-        error.OutOfMemory, error.QueryFailed => |e| return e,
-        else => {
-            if (diag.message.len == 0)
-                diag.message = try std.fmt.allocPrint(arena, "query failed ({s})", .{@errorName(err)});
-            return error.QueryFailed;
-        },
+    return runInner(arena, gpa, io, ws, opts, diag) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (diag.message.len == 0)
+            diag.message = try std.fmt.allocPrint(arena, "query failed ({s})", .{@errorName(err)});
+        return error.QueryFailed;
     };
 }
 
@@ -107,7 +105,7 @@ fn runInner(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
 
     var notices: std.ArrayList([]const u8) = .empty;
     if (try staleness(arena, io, ws, db)) |n| try notices.append(arena, n);
-    const r = try rank(arena, gpa, db, opts);
+    const r = try rank(arena, gpa, db, opts, diag);
     if (r.semantic_skipped) |n| try notices.append(arena, n);
     const results = try load(arena, db, try merge(arena, r.lexical, r.semantic));
     for (results) |*res| res.notices = notices.items;
@@ -142,14 +140,18 @@ pub const Ranking = struct {
 };
 
 /// Ranks `opts.text` both ways in the open index `db`.
-pub fn rank(arena: Allocator, gpa: Allocator, db: dbm.Db, opts: Options) !Ranking {
+pub fn rank(arena: Allocator, gpa: Allocator, db: dbm.Db, opts: Options, diag: *Diag) !Ranking {
     const lex = try lexical(arena, db, opts.text, opts.k);
     var sem: []const i64 = &.{};
     var skip: ?[]const u8 = null;
     if (try semanticSkipReason(arena, db, opts)) |why| {
         skip = try skipped(arena, why);
     } else {
-        const dim = std.fmt.parseInt(u32, (try index.readSetting(arena, db, "dim")).?, 10) catch return error.QueryFailed;
+        const dim_text = (try index.readSetting(arena, db, "dim")).?;
+        const dim = std.fmt.parseInt(u32, dim_text, 10) catch {
+            diag.message = try std.fmt.allocPrint(arena, "the index's dim setting is not a number (\"{s}\"); rebuild it with: {s}", .{ dim_text, index.rebuild_command });
+            return error.QueryFailed;
+        };
         if (embedQuery(arena, gpa, opts.provider.?, dim, opts.text)) |vec| {
             sem = try semantic(arena, db, vec, opts.k);
         } else |why| skip = try skipped(arena, try describeEmbedFailure(arena, why, dim));
@@ -694,6 +696,8 @@ test "query: model unavailable gives lexical results and says semantic search wa
     const other = try queryIn(&f, "", .{ .text = "retry policy", .provider = stub.provider(), .model_url = "test://other" });
     try testing.expect(other.results.len > 0);
     try testing.expect(std.mem.indexOf(u8, other.notices[0], index.rebuild_command) != null);
+    try testing.expect(std.mem.indexOf(u8, other.notices[0], "built with model test://stub") != null);
+    try testing.expect(std.mem.indexOf(u8, other.notices[0], "uses test://other") != null);
     try expectJsonNotices(&f, other);
 }
 
@@ -865,4 +869,17 @@ test "query with the real model: a concept found without shared words (DEVLOG_IN
         for (r.methods) |m| if (std.mem.eql(u8, m, "semantic")) return;
     }
     return error.RetryPolicyNotFoundSemantically;
+}
+
+test "query: a corrupt dim setting fails with a message naming the rebuild" {
+    var f = try testutil.Fixture.init();
+    defer f.deinit();
+    var stub: testutil.Stub = .{};
+    _ = try f.update("", &stub, false);
+    try f.exec("UPDATE settings SET value = 'eight' WHERE key = 'dim'");
+    var wdiag: workspace.Diag = .{};
+    const ws = try workspace.resolve(f.arena(), testing.io, f.root, &wdiag);
+    var diag: Diag = .{};
+    try testing.expectError(error.QueryFailed, run(f.arena(), testing.allocator, testing.io, ws, .{ .text = "retry", .provider = stub.provider(), .model_url = "test://stub" }, &diag));
+    try testing.expectEqualStrings("the index's dim setting is not a number (\"eight\"); rebuild it with: " ++ index.rebuild_command, diag.message);
 }

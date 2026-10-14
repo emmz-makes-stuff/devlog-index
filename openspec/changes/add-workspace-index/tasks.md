@@ -54,3 +54,17 @@
 
 - [x] 10.1 Add `install.sh` (ReleaseFast build, copy to `~/.local/bin`) and complete `README.md` with install, `init`, `update`, `query`, `status`, `eval`, the `--json` line contract and where workspace data lives; verify a fresh install runs `devlog-index status` from inside a member repo of the real workspace and the README's commands work as written
 - [x] 10.2 End-to-end check from a member repo: add a devlog note in one real-workspace member, run `update` from another, and query for it; verify the new note is returned with correct labels and that `zig build`, `zig build test --summary all` and `zig fmt --check src build.zig` all exit 0
+
+## 11. Review fixes: correctness
+
+- [x] 11.1 Load the model once per `ModelProvider`: `get` returns the already-loaded embedder instead of loading (and leaking) another model; verify with a model-gated test that repeated `get` calls keep the same loaded model (the stub cannot show this: each `get` is its own load), and state the contract on `Provider`
+- [x] 11.2 Every failure names its cause: each command's `run` wrapper fills a default message whenever its diag is empty, and the vector-length (update), `last_update` (status) and `dim` (query) failures get their own messages; verify with tests that no failure path leaves the message empty
+- [x] 11.3 Reject a workspace whose members share a folder name (it is the `member` label), naming both; verify with a config test
+- [x] 11.4 Reword the corpus-indexing "Model mismatch" scenario (and design D3) to the agreed behaviour: `update` refuses; `query` returns lexical results with a notice naming both models and the rebuild command; verify `make validate`
+- [x] 11.5 Re-time the cold query on the real workspace with the installed ReleaseFast binary, now that thread expansion runs per result; verify it is within the 1 s budget and record the timings in a devlog note
+
+## 12. Review fixes: CLI and scaffolding
+
+- [ ] 12.1 Add CLI integration tests (D10) that run the built binary against a temp copy of the fixture: `query --json` writes only JSON lines to stdout with notices on stderr; exit codes are 0 on success, 1 on an error and on a failed `eval`, 2 on a usage error; verify they run in `zig build test`
+- [ ] 12.2 Remove the `bench-cold` spike (`src/bench.zig` and its `main.zig` branch); its measurements stay in the §2 and §7 devlog notes
+- [ ] 12.3 Tidy drift in `main.zig` and below: one usage-exit path for every command; `query` rejects unknown `--` flags instead of treating them as text; drop the unused `update.Report.missing_members`; fix the stale `Embedder.embed` doc comment; close SQLite connections with `sqlite3_close_v2`; verify `make gates`

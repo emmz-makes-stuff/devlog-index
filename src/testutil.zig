@@ -16,6 +16,8 @@ const Embedder = update_mod.Embedder;
 pub const Stub = struct {
     fail_load: bool = false,
     fail_after: ?usize = null,
+    /// Vectors one element short of the 8 dimensions it reports.
+    short_vectors: bool = false,
     loads: usize = 0,
     embeds: usize = 0,
 
@@ -36,7 +38,7 @@ pub const Stub = struct {
         s.embeds += 1;
         var digest: [32]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash(text, &digest, .{});
-        const v = try gpa.alloc(f32, 8);
+        const v = try gpa.alloc(f32, if (s.short_vectors) 7 else 8);
         var sum: f32 = 0;
         for (v, 0..) |*x, i| {
             x.* = @as(f32, @floatFromInt(digest[i])) - 127.5;
@@ -89,6 +91,13 @@ pub const Fixture = struct {
 
     pub fn db(f: *Fixture) !dbm.Db {
         return dbm.Db.open(try std.fs.path.joinZ(f.arena(), &.{ f.root, ".devlog-index", "index.db" }), .read_only);
+    }
+
+    /// Runs `sql` against the index, read-write.
+    pub fn exec(f: *Fixture, sql: [:0]const u8) !void {
+        var d = try dbm.Db.open(try std.fs.path.joinZ(f.arena(), &.{ f.root, ".devlog-index", "index.db" }), .read_write_create);
+        defer d.close();
+        try d.exec(sql);
     }
 
     pub fn count(f: *Fixture, sql: []const u8) !i64 {

@@ -112,13 +112,11 @@ pub fn goldenPath(arena: Allocator, ws: workspace.Workspace) Allocator.Error![]c
 }
 
 pub fn run(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, opts: Options, diag: *Diag) Error!Report {
-    return runInner(arena, gpa, io, ws, opts, diag) catch |err| switch (err) {
-        error.OutOfMemory, error.EvalFailed => |e| return e,
-        else => {
-            if (diag.message.len == 0)
-                diag.message = try std.fmt.allocPrint(arena, "eval failed ({s})", .{@errorName(err)});
-            return error.EvalFailed;
-        },
+    return runInner(arena, gpa, io, ws, opts, diag) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (diag.message.len == 0)
+            diag.message = try std.fmt.allocPrint(arena, "eval failed ({s})", .{@errorName(err)});
+        return error.EvalFailed;
     };
 }
 
@@ -145,7 +143,11 @@ fn runInner(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
 
     const entries = try arena.alloc(Entry, golden.questions.len);
     for (golden.questions, entries) |q, *e| {
-        const r = try query.rank(arena, gpa, db, .{ .text = q.question, .k = depth, .model_url = opts.model_url, .provider = opts.provider });
+        var qdiag: query.Diag = .{};
+        const r = query.rank(arena, gpa, db, .{ .text = q.question, .k = depth, .model_url = opts.model_url, .provider = opts.provider }, &qdiag) catch |err| {
+            diag.message = qdiag.message;
+            return err;
+        };
         if (r.semantic_skipped) |why| {
             diag.message = try std.fmt.allocPrint(arena, "cannot evaluate: {s}", .{why});
             return error.EvalFailed;

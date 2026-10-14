@@ -61,8 +61,9 @@ Tables: `settings` (model URL, dimension, schema version), `files` (member, path
 change, archived, note time, last indexed), `passages` (file id, ordinal, text, title), an FTS5 table
 over passage text (porter tokenizer), and a sqlite-vec `vec0` table over passage vectors. Each file's
 re-index happens in one transaction; the whole update commits at the end, so an interrupted update leaves
-the previous index intact. Model URL or dimension mismatch → refuse with the rebuild command
-(`update --rebuild`).
+the previous index intact. Model URL or dimension mismatch → `update` refuses with the rebuild command
+(`update --rebuild`); `query` degrades to lexical results with a notice naming both models and the
+rebuild (agreed with Emmz in the whole-change review, 2026-10-14).
 *Alternatives:* BLOB vectors with hand-written cosine; flat files + in-memory BM25 (both in ADR-0002).
 
 ### D4. Workspace config and location (ADR-0002)

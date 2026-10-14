@@ -88,7 +88,8 @@ refuse to mix vectors and SHALL tell the user to rebuild.
 
 #### Scenario: Model mismatch
 - **WHEN** the index was built with model A and the tool is configured for model B
-- **THEN** `update` and `query` refuse, naming both models and the rebuild command
+- **THEN** `update` refuses, naming both models and the rebuild command
+- **AND** `query` returns lexical results only, with a notice naming both models and the rebuild command
 
 #### Scenario: Embedding unavailable during update
 - **WHEN** the model cannot be loaded during `update`

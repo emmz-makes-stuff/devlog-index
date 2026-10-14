@@ -35,14 +35,15 @@ pub const Embedder = struct {
     dim: u32,
     embedFn: *const fn (ptr: *anyopaque, gpa: Allocator, text: []const u8) anyerror![]f32,
 
-    /// A document vector for `text`; caller owns it.
+    /// The vector for `text` (document or query, per the provider's task); caller owns it.
     pub fn embed(e: Embedder, gpa: Allocator, text: []const u8) anyerror![]f32 {
         return e.embedFn(e.ptr, gpa, text);
     }
 };
 
 /// Supplies the embedder on first need. `get` may download and load a
-/// model; it is called at most once per update.
+/// model on its first call; query and eval call it once per query, so later
+/// calls must return the loaded embedder.
 pub const Provider = struct {
     ptr: *anyopaque,
     getFn: *const fn (ptr: *anyopaque) anyerror!Embedder,
@@ -91,13 +92,14 @@ pub fn indexPath(arena: Allocator, ws: workspace.Workspace) Allocator.Error![:0]
 }
 
 pub fn run(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, opts: Options, diag: *Diag) Error!Report {
-    return runInner(arena, gpa, io, ws, opts, diag) catch |err| switch (err) {
-        error.ModelMismatch, error.SchemaMismatch, error.EmbeddingUnavailable, error.UpdateFailed, error.OutOfMemory => |e| return e,
-        else => {
-            if (diag.message.len == 0)
-                diag.message = try std.fmt.allocPrint(arena, "update failed ({s}); the index is unchanged", .{@errorName(err)});
-            return error.UpdateFailed;
-        },
+    return runInner(arena, gpa, io, ws, opts, diag) catch |err| {
+        if (err == error.OutOfMemory) return error.OutOfMemory;
+        if (diag.message.len == 0)
+            diag.message = try std.fmt.allocPrint(arena, "update failed ({s}); the index is unchanged", .{@errorName(err)});
+        return switch (err) {
+            error.ModelMismatch, error.SchemaMismatch, error.EmbeddingUnavailable, error.UpdateFailed => |e| e,
+            else => error.UpdateFailed,
+        };
     };
 }
 
@@ -483,7 +485,10 @@ const Writer = struct {
         defer w.gpa.free(v);
         report.passages_embedded += 1;
         w.reportProgress(report.passages_embedded);
-        if (v.len != e.dim) return error.UpdateFailed;
+        if (v.len != e.dim) {
+            w.diag.message = try std.fmt.allocPrint(w.arena, "the model returned a {d}-d vector where {d}-d was expected; the index is unchanged", .{ v.len, e.dim });
+            return error.UpdateFailed;
+        }
         return w.gpa.dupe(u8, std.mem.sliceAsBytes(v));
     }
 
@@ -575,6 +580,8 @@ pub const ModelProvider = struct {
 
     fn get(ptr: *anyopaque) anyerror!Embedder {
         const mp: *ModelProvider = @ptrCast(@alignCast(ptr));
+        // Loaded once: query and eval ask for the embedder on every query.
+        if (mp.embedder) |e| return .{ .ptr = mp, .dim = e.dim, .embedFn = embedText };
         if (mp.download_url) |url|
             _ = try download.ensureCached(mp.gpa, mp.io, mp.model_path, url)
         else
@@ -860,4 +867,29 @@ test "update: progress counts the passages to embed, excluding reusable ones" {
     try f.tmp.dir.rename("alpha/openspec/changes/add-cache", f.tmp.dir, "alpha/openspec/changes/archive/2026-04-02-add-cache", testing.io);
     _ = try run(f.arena(), testing.allocator, testing.io, ws, .{ .provider = stub.provider(), .model_url = "test://stub", .progress = &progress.writer }, &diag);
     try testing.expectEqualStrings("", progress.written());
+}
+
+test "ModelProvider loads the model once however often it is asked (DEVLOG_INDEX_TEST_MODEL)" {
+    const env = std.c.getenv("DEVLOG_INDEX_TEST_MODEL") orelse return error.SkipZigTest;
+    var mp: ModelProvider = .{ .gpa = testing.allocator, .io = testing.io, .model_path = std.mem.span(env), .download_url = null, .task = .query };
+    defer mp.deinit();
+    const p = mp.provider();
+    const first = try p.getFn(p.ptr);
+    const handle = mp.model.?.handle;
+    for (0..3) |_| {
+        const again = try p.getFn(p.ptr);
+        try testing.expectEqual(first.dim, again.dim);
+        try testing.expectEqual(handle, mp.model.?.handle);
+    }
+}
+
+test "update: a vector of the wrong length is refused with a message, the index unchanged" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var short: Stub = .{ .short_vectors = true };
+    var wdiag: workspace.Diag = .{};
+    const ws = try workspace.resolve(f.arena(), testing.io, f.root, &wdiag);
+    var diag: Diag = .{};
+    try testing.expectError(error.UpdateFailed, run(f.arena(), testing.allocator, testing.io, ws, .{ .provider = short.provider(), .model_url = "test://stub" }, &diag));
+    try testing.expectEqualStrings("the model returned a 7-d vector where 8-d was expected; the index is unchanged", diag.message);
 }

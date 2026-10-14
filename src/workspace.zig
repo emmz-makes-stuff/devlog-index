@@ -121,6 +121,9 @@ pub fn validate(arena: Allocator, root: []const u8, config: Config, diag: *Diag)
         for (resolved[0..i], config.members[0..i]) |prev, prev_declared| {
             if (std.mem.eql(u8, prev, r.*))
                 return fail(arena, diag, "members \"{s}\" and \"{s}\" are the same path", .{ prev_declared, m });
+            // The folder name is the member's label in the index and in results.
+            if (std.mem.eql(u8, std.fs.path.basename(prev), std.fs.path.basename(r.*)))
+                return fail(arena, diag, "members \"{s}\" and \"{s}\" have the same folder name, which labels them; rename one", .{ prev_declared, m });
         }
     }
 }
@@ -285,6 +288,7 @@ test "parse rejects bad configs with a reason" {
         .{ .json = "{\"name\":\"a\",\"members\":[\"x\",3]}", .reason = "array of paths" },
         .{ .json = "{\"name\":\"a\",\"members\":[\"x\",\"./x\"]}", .reason = "same path" },
         .{ .json = "{\"name\":\"a\",\"members\":[\"/w/x\",\"x\"]}", .reason = "same path" },
+        .{ .json = "{\"name\":\"a\",\"members\":[\"a/api\",\"b/api\"]}", .reason = "\"a/api\" and \"b/api\" have the same folder name" },
         .{ .json = "[\"a\"]", .reason = "expected a JSON object" },
         .{ .json = "{\"name\":", .reason = "invalid JSON" },
     };
