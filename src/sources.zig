@@ -105,30 +105,47 @@ pub fn stripDatePrefix(dir: []const u8) []const u8 {
 
 /// Every indexed file of every member whose status is `ok`, sorted by path.
 /// Symlinked files and directories are followed and indexed at the link's
-/// path; a directory whose target was already visited is skipped, so a loop
-/// ends. A link that leads nowhere (or loops on itself) is skipped, and its
-/// path is appended to `broken` when given.
+/// path. Every member's real folders are walked first and symlinked folders
+/// after, in path order, so a folder reachable both directly and through a
+/// link is indexed at its real path; a directory whose target was already
+/// visited is skipped, so a loop ends. A link that leads nowhere (or loops on
+/// itself) is skipped, and its path is appended to `broken` when given.
 pub fn discover(arena: Allocator, io: Io, ws: workspace.Workspace, broken: ?*std.ArrayList([]const u8)) ![]Source {
     var w: Walk = .{ .arena = arena, .io = io, .broken = broken };
     for (ws.members) |m| {
         if (m.status != .ok) continue;
         w.member = std.fs.path.basename(m.path);
-        w.openspec = try std.fs.path.join(arena, &.{ m.path, "openspec" });
-        try w.dir(w.openspec, "");
+        try w.dir(try std.fs.path.join(arena, &.{ m.path, "openspec" }), "");
+    }
+    // Links found while following a link are queued too, so take the
+    // smallest path each time rather than draining a snapshot.
+    while (w.pending.items.len > 0) {
+        std.mem.sort(Pending, w.pending.items, {}, morePendingPath);
+        const next = w.pending.pop().?;
+        w.member = next.member;
+        try w.dir(next.abs, next.rel);
     }
     std.mem.sort(Source, w.list.items, {}, lessByPath);
     return w.list.items;
 }
+
+/// A symlinked folder waiting for the second pass.
+const Pending = struct {
+    member: []const u8,
+    abs: []const u8,
+    rel: []const u8,
+};
 
 const Walk = struct {
     arena: Allocator,
     io: Io,
     broken: ?*std.ArrayList([]const u8),
     member: []const u8 = "",
-    openspec: []const u8 = "",
     list: std.ArrayList(Source) = .empty,
     /// Real paths of the directories walked so far.
     visited: std.StringHashMapUnmanaged(void) = .empty,
+    /// Symlinked folders, followed only once every real folder is walked.
+    pending: std.ArrayList(Pending) = .empty,
 
     /// `rel` is `abs` relative to the member's `openspec/`, `/`-separated.
     fn dir(w: *Walk, abs: []const u8, rel: []const u8) !void {
@@ -137,8 +154,7 @@ const Walk = struct {
 
         var d = try Io.Dir.cwd().openDir(w.io, abs, .{ .iterate = true });
         defer d.close(w.io);
-        // By name, so which path wins an already-visited target is the same
-        // on every run.
+        // By name, so the walk is the same on every run.
         var entries: std.ArrayList(Io.Dir.Entry) = .empty;
         var it = d.iterate();
         while (try it.next(w.io)) |entry|
@@ -162,7 +178,7 @@ const Walk = struct {
                         else => |e| return e,
                     };
                     switch (st.kind) {
-                        .directory => try w.dir(child_abs, child_rel),
+                        .directory => try w.pending.append(w.arena, .{ .member = w.member, .abs = child_abs, .rel = child_rel }),
                         .file => try w.file(child_abs, child_rel),
                         else => {},
                     }
@@ -189,6 +205,11 @@ fn lessByName(_: void, a: Io.Dir.Entry, b: Io.Dir.Entry) bool {
 
 fn lessByPath(_: void, a: Source, b: Source) bool {
     return std.mem.order(u8, a.path, b.path) == .lt;
+}
+
+/// Descending, so `pop` takes the smallest path.
+fn morePendingPath(_: void, a: Pending, b: Pending) bool {
+    return std.mem.order(u8, a.abs, b.abs) == .gt;
 }
 
 // ---- tests ----
@@ -343,4 +364,46 @@ test "discover follows symlinked files and directories, skips a loop, reports a 
     const r = try f.update("", &stub, false);
     try testing.expectEqual(@as(usize, 21), r.added);
     try testing.expectEqual(@as(usize, 1), r.broken_links.len);
+}
+
+test "discover indexes a folder reachable directly and through a link at its real path" {
+    const testutil = @import("testutil.zig");
+    var f = try testutil.Fixture.init();
+    defer f.deinit();
+    const d = f.tmp.dir;
+    const io = testing.io;
+
+    // Both links sort before the real `specs/auth`: "alias" < "auth", and
+    // "changes" < "specs".
+    try d.symLink(io, try f.path("alpha/openspec/specs/auth"), "alpha/openspec/specs/alias", .{ .is_directory = true });
+    try d.symLink(io, try f.path("alpha/openspec/specs/auth"), "alpha/openspec/changes/add-cache/specs/linked", .{ .is_directory = true });
+    // A link inside a followed link is followed too.
+    try f.write("elsewhere/nested/spec.md", "# Nested spec\n\nReached through two links.\n");
+    try d.createDirPath(io, "elsewhere/outer");
+    try d.symLink(io, try f.path("elsewhere/nested"), "elsewhere/outer/nested", .{ .is_directory = true });
+    try d.symLink(io, try f.path("elsewhere/outer"), "beta/openspec/specs/outer", .{ .is_directory = true });
+
+    var diag: workspace.Diag = .{};
+    const ws = try workspace.resolve(f.arena(), io, f.root, &diag);
+    const found = try discover(f.arena(), io, ws, null);
+
+    try testing.expectEqual(@as(usize, 20), found.len);
+    var auth: usize = 0;
+    var nested = false;
+    for (found) |s| {
+        try testing.expect(std.mem.indexOf(u8, s.rel, "alias") == null);
+        try testing.expect(std.mem.indexOf(u8, s.rel, "linked") == null);
+        if (std.mem.eql(u8, s.rel, "openspec/specs/auth/spec.md")) {
+            auth += 1;
+            try testing.expectEqualStrings("alpha", s.member);
+            try testing.expectEqual(Artifact.spec, s.class.artifact);
+        }
+        if (std.mem.eql(u8, s.rel, "openspec/specs/outer/nested/spec.md")) {
+            nested = true;
+            try testing.expectEqualStrings("beta", s.member);
+            try testing.expectEqualStrings("outer/nested", s.class.capability.?);
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), auth);
+    try testing.expect(nested);
 }

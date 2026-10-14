@@ -85,4 +85,4 @@
 
 ## 15. Review fixes: symlink precedence
 
-- [ ] 15.1 Discovery walks every member's real folders first, without following symlinked folders, then follows the queued symlinked folders in path order (links found inside them are queued too), so a folder reachable both directly and through a link is always indexed at its real path; test a sibling link (`specs/alias` → `specs/auth`) and a link from `changes/` into `specs/`, both indexed under the real path only; verify `make gates`
+- [x] 15.1 Discovery walks every member's real folders first, without following symlinked folders, then follows the queued symlinked folders in path order (links found inside them are queued too), so a folder reachable both directly and through a link is always indexed at its real path; test a sibling link (`specs/alias` → `specs/auth`) and a link from `changes/` into `specs/`, both indexed under the real path only; verify `make gates`
