@@ -27,7 +27,7 @@ pub const Db = struct {
             .read_write_create => c.SQLITE_OPEN_READWRITE | c.SQLITE_OPEN_CREATE,
         };
         if (c.sqlite3_open_v2(path.ptr, &h, flags, null) != c.SQLITE_OK) {
-            if (h) |opened| _ = c.sqlite3_close(opened);
+            if (h) |opened| _ = c.sqlite3_close_v2(opened);
             return error.SqliteOpenFailed;
         }
         _ = c.sqlite3_busy_timeout(h, 5000);
@@ -35,7 +35,7 @@ pub const Db = struct {
     }
 
     pub fn close(db: *Db) void {
-        _ = c.sqlite3_close(db.handle);
+        _ = c.sqlite3_close_v2(db.handle);
         db.* = undefined;
     }
 

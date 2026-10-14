@@ -69,7 +69,6 @@ pub const Report = struct {
     passages_reused: usize = 0,
     /// Passages in the index after the update.
     passages_total: usize = 0,
-    missing_members: []const workspace.Member = &.{},
 
     pub fn filesChanged(r: Report) usize {
         return r.added + r.changed + r.removed;
@@ -156,7 +155,6 @@ fn updateAt(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
 
     var missing: std.ArrayList(workspace.Member) = .empty;
     for (ws.members) |m| if (m.status != .ok) try missing.append(arena, m);
-    report.missing_members = missing.items;
 
     var idiag: index.Diag = .{};
     var ix = index.Index.open(arena, path, opts.model_url, &idiag) catch |err| switch (err) {
@@ -724,7 +722,7 @@ test "update: a deleted file's passages are gone from every table" {
     try testing.expectEqual(n, try f.count("SELECT count(*) FROM passages_vec"));
 }
 
-test "update: a missing member is reported and its passages kept" {
+test "update: a missing member's passages are kept" {
     var f = try Fixture.init();
     defer f.deinit();
     var stub: Stub = .{};
@@ -732,8 +730,6 @@ test "update: a missing member is reported and its passages kept" {
 
     try f.tmp.dir.rename("beta", f.tmp.dir, "beta-moved", testing.io);
     const r = try f.update("alpha", &stub, false);
-    try testing.expectEqual(@as(usize, 1), r.missing_members.len);
-    try testing.expectEqualStrings("beta", r.missing_members[0].declared);
     try testing.expectEqual(@as(usize, 0), r.removed);
     try testing.expectEqual(before.passages_total, r.passages_total);
 }

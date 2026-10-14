@@ -65,6 +65,6 @@
 
 ## 12. Review fixes: CLI and scaffolding
 
-- [ ] 12.1 Add CLI integration tests (D10) that run the built binary against a temp copy of the fixture: `query --json` writes only JSON lines to stdout with notices on stderr; exit codes are 0 on success, 1 on an error and on a failed `eval`, 2 on a usage error; verify they run in `zig build test`
-- [ ] 12.2 Remove the `bench-cold` spike (`src/bench.zig` and its `main.zig` branch); its measurements stay in the §2 and §7 devlog notes
-- [ ] 12.3 Tidy drift in `main.zig` and below: one usage-exit path for every command; `query` rejects unknown `--` flags instead of treating them as text; drop the unused `update.Report.missing_members`; fix the stale `Embedder.embed` doc comment; close SQLite connections with `sqlite3_close_v2`; verify `make gates`
+- [x] 12.1 Add CLI integration tests (D10) that run the built binary against a temp copy of the fixture: `query --json` writes only JSON lines to stdout with notices on stderr; exit codes are 0 on success, 1 on an error and on a failed `eval`, 2 on a usage error; verify they run in `zig build test`
+- [x] 12.2 Remove the `bench-cold` spike (`src/bench.zig` and its `main.zig` branch); its measurements stay in the §2 and §7 devlog notes
+- [x] 12.3 Tidy drift in `main.zig` and below: one usage-exit path for every command; `query` rejects unknown `--` flags instead of treating them as text; drop the unused `update.Report.missing_members`; fix the stale `Embedder.embed` doc comment; close SQLite connections with `sqlite3_close_v2`; verify `make gates`

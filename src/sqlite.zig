@@ -19,7 +19,7 @@ test "in-memory DB has FTS5 and vec0" {
     registerVec();
     var db: ?*c.sqlite3 = null;
     try std.testing.expectEqual(c.SQLITE_OK, c.sqlite3_open(":memory:", &db));
-    defer _ = c.sqlite3_close(db);
+    defer _ = c.sqlite3_close_v2(db);
 
     const sql =
         \\CREATE VIRTUAL TABLE t_fts USING fts5(body, tokenize = 'porter');

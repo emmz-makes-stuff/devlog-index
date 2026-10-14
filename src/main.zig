@@ -1,5 +1,4 @@
 const std = @import("std");
-const bench = @import("bench.zig");
 const workspace = @import("workspace.zig");
 const update = @import("update.zig");
 const status = @import("status.zig");
@@ -38,10 +37,7 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (std.mem.eql(u8, args[1], "init")) {
-        if (args.len < 4) {
-            std.debug.print("usage: devlog-index init <name> <member>...\n", .{});
-            std.process.exit(2);
-        }
+        if (args.len < 4) usageExit("usage: devlog-index init <name> <member>...\n");
         var stderr_buf: [1024]u8 = undefined;
         var stderr_writer: std.Io.File.Writer = .init(.stderr(), init.io, &stderr_buf);
         const root = try std.process.currentPathAlloc(init.io, arena);
@@ -62,10 +58,7 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, args[1], "update")) {
         var rebuild = false;
         for (args[2..]) |a| {
-            if (std.mem.eql(u8, a, "--rebuild")) rebuild = true else {
-                std.debug.print("usage: devlog-index update [--rebuild]\n", .{});
-                std.process.exit(2);
-            }
+            if (std.mem.eql(u8, a, "--rebuild")) rebuild = true else usageExit("usage: devlog-index update [--rebuild]\n");
         }
         const ws = resolveWorkspace(init, arena);
         for (ws.members) |m| if (m.status != .ok)
@@ -99,10 +92,7 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, args[1], "status")) {
         var json = false;
         for (args[2..]) |a| {
-            if (std.mem.eql(u8, a, "--json")) json = true else {
-                std.debug.print("usage: devlog-index status [--json]\n", .{});
-                std.process.exit(2);
-            }
+            if (std.mem.eql(u8, a, "--json")) json = true else usageExit("usage: devlog-index status [--json]\n");
         }
         const ws = resolveWorkspace(init, arena);
         const home = init.environ_map.get("HOME") orelse fatal("HOME is not set; it locates the model cache");
@@ -132,6 +122,8 @@ pub fn main(init: std.process.Init) !void {
                 if (i == args.len) usageExit(query_usage);
                 k = std.fmt.parseInt(usize, args[i], 10) catch usageExit(query_usage);
                 if (k < 1 or k > query.max_k) usageExit(query_usage);
+            } else if (std.mem.startsWith(u8, a, "--")) {
+                usageExit(query_usage);
             } else try words.append(arena, a);
         }
         const text = try std.mem.join(arena, " ", words.items);
@@ -170,20 +162,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    if (std.mem.eql(u8, args[1], "bench-cold")) {
-        bench.run(init, args[2..], out) catch |err| switch (err) {
-            error.Usage => {
-                std.debug.print("usage: devlog-index bench-cold [--setup] <db>\n", .{});
-                std.process.exit(2);
-            },
-            else => return err,
-        };
-        try out.flush();
-        return;
-    }
-
-    std.debug.print("devlog-index: unknown command '{s}'\n\n{s}", .{ args[1], usage });
-    std.process.exit(2);
+    usageExit(std.fmt.allocPrint(arena, "devlog-index: unknown command '{s}'\n\n{s}", .{ args[1], usage }) catch usage);
 }
 
 /// The workspace for every command except `init`, or exit naming `init`.
@@ -227,4 +206,5 @@ test {
     _ = @import("status.zig");
     _ = @import("query.zig");
     _ = @import("eval.zig");
+    _ = @import("cli_test.zig");
 }
