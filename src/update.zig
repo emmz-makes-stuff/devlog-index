@@ -69,6 +69,8 @@ pub const Report = struct {
     passages_reused: usize = 0,
     /// Passages in the index after the update.
     passages_total: usize = 0,
+    /// Symlinks under a member's `openspec/` that lead nowhere; skipped.
+    broken_links: []const []const u8 = &.{},
 
     pub fn filesChanged(r: Report) usize {
         return r.added + r.changed + r.removed;
@@ -195,7 +197,9 @@ fn updateAt(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
 
     // Snapshot every source before the (slow) embedding starts, so a live
     // workspace has only a short window to change under us.
-    const snapshot = try takeSnapshot(arena, io, try sources.discover(arena, io, ws), diag);
+    var broken: std.ArrayList([]const u8) = .empty;
+    const snapshot = try takeSnapshot(arena, io, try sources.discover(arena, io, ws, &broken), &existing, diag);
+    report.broken_links = broken.items;
 
     var w: Writer = try .init(arena, gpa, db, &ix, opts.provider, diag);
     defer w.deinit();
@@ -206,7 +210,7 @@ fn updateAt(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
         var counted: std.StringHashMapUnmanaged(void) = .empty;
         for (snapshot) |*snap| {
             if (existing.get(snap.src.path)) |old| if (std.mem.eql(u8, old.hash, &snap.hash)) continue;
-            snap.chunked = try chunk.passages(arena, snap.src, snap.text);
+            snap.chunked = try chunk.passages(arena, snap.src, snap.text.?);
             for (snap.chunked.?.passages) |p| {
                 const h = try arena.dupe(u8, &hashHex(p));
                 if ((try counted.getOrPut(arena, h)).found_existing) continue;
@@ -270,7 +274,8 @@ fn updateAt(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
 
 const Snap = struct {
     src: sources.Source,
-    text: []const u8,
+    /// Null when the file was not read: its size and mtime match its row.
+    text: ?[]const u8,
     hash: [64]u8,
     size: i64,
     mtime_ns: i64,
@@ -278,18 +283,26 @@ const Snap = struct {
     chunked: ?chunk.Chunked = null,
 };
 
-/// Stat, read and hash every source. A file that vanished since discovery
-/// is left out, as if it had not been found (so an indexed copy is removed).
-/// The stat comes before the read: if the file changes in between, the
-/// recorded mtime is older than the content, so the next freshness check
-/// re-hashes it rather than missing the change.
-fn takeSnapshot(arena: Allocator, io: Io, srcs: []const sources.Source, diag: *Diag) ![]Snap {
+/// Stat, read and hash every source. A file whose size and mtime match its
+/// `existing` row is not read; it keeps the recorded hash, as freshness
+/// decides. A file that vanished since discovery is left out, as if it had
+/// not been found (so an indexed copy is removed). The stat comes before the
+/// read: if the file changes in between, the recorded mtime is older than
+/// the content, so the next freshness check re-hashes it rather than missing
+/// the change.
+fn takeSnapshot(arena: Allocator, io: Io, srcs: []const sources.Source, existing: *const std.StringHashMapUnmanaged(Existing), diag: *Diag) ![]Snap {
     const cwd = Io.Dir.cwd();
     var out: std.ArrayList(Snap) = .empty;
     for (srcs) |src| {
         const st = cwd.statFile(io, src.path, .{}) catch |err| switch (err) {
             error.FileNotFound, error.NotDir => continue,
             else => return readFailed(arena, diag, src.path, err),
+        };
+        const size: i64 = @intCast(st.size);
+        const mtime_ns: i64 = @intCast(st.mtime.nanoseconds);
+        if (existing.get(src.path)) |old| if (old.size == size and old.mtime_ns == mtime_ns and old.hash.len == 64) {
+            try out.append(arena, .{ .src = src, .text = null, .hash = old.hash[0..64].*, .size = size, .mtime_ns = mtime_ns });
+            continue;
         };
         const text = cwd.readFileAlloc(io, src.path, arena, .unlimited) catch |err| switch (err) {
             error.FileNotFound, error.NotDir => continue,
@@ -300,8 +313,8 @@ fn takeSnapshot(arena: Allocator, io: Io, srcs: []const sources.Source, diag: *D
             .src = src,
             .text = text,
             .hash = hashHex(text),
-            .size = @intCast(st.size),
-            .mtime_ns = @intCast(st.mtime.nanoseconds),
+            .size = size,
+            .mtime_ns = mtime_ns,
         });
     }
     return out.items;
@@ -883,16 +896,62 @@ test "snapshot: a file that vanished since discovery is left out, so its indexed
 
     var wdiag: workspace.Diag = .{};
     const ws = try workspace.resolve(f.arena(), testing.io, f.root, &wdiag);
-    const srcs = try sources.discover(f.arena(), testing.io, ws);
+    const srcs = try sources.discover(f.arena(), testing.io, ws, null);
     // Delete one discovered file before the snapshot reads it.
     try Io.Dir.cwd().deleteFile(testing.io, srcs[0].path);
     var diag: Diag = .{};
-    const snap = try takeSnapshot(f.arena(), testing.io, srcs, &diag);
+    const none: std.StringHashMapUnmanaged(Existing) = .empty;
+    const snap = try takeSnapshot(f.arena(), testing.io, srcs, &none, &diag);
     try testing.expectEqual(srcs.len - 1, snap.len);
     for (snap) |s| try testing.expect(!std.mem.eql(u8, s.src.path, srcs[0].path));
 
     const r = try f.update("", &stub, false);
     try testing.expectEqual(@as(usize, 1), r.removed);
+}
+
+test "snapshot: a file whose size and mtime match its row is not read; a same-size edit is" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var stub: Stub = .{};
+    _ = try f.update("", &stub, false);
+
+    var wdiag: workspace.Diag = .{};
+    const ws = try workspace.resolve(f.arena(), testing.io, f.root, &wdiag);
+    var existing: std.StringHashMapUnmanaged(Existing) = .empty;
+    {
+        var d = try f.db();
+        defer d.close();
+        var s = try d.prepare("SELECT id, path, hash, size, mtime_ns FROM files");
+        defer s.finalize();
+        while (try s.step()) try existing.put(f.arena(), try f.arena().dupe(u8, s.text(1)), .{
+            .id = s.int(0),
+            .hash = try f.arena().dupe(u8, s.text(2)),
+            .size = s.int(3),
+            .mtime_ns = s.int(4),
+        });
+    }
+    var diag: Diag = .{};
+    const unchanged = try takeSnapshot(f.arena(), testing.io, try sources.discover(f.arena(), testing.io, ws, null), &existing, &diag);
+    try testing.expectEqual(@as(usize, 19), unchanged.len);
+    for (unchanged) |s| try testing.expect(s.text == null);
+
+    // Same length, different bytes, new mtime.
+    const rel = "alpha/openspec/changes/archive/2026-03-10-add-retry/design.md";
+    const old = try f.tmp.dir.readFileAlloc(testing.io, rel, f.arena(), .unlimited);
+    const edited = try f.arena().dupe(u8, old);
+    edited[0] = if (edited[0] == 'X') 'Y' else 'X';
+    try f.write(rel, edited);
+    const snap = try takeSnapshot(f.arena(), testing.io, try sources.discover(f.arena(), testing.io, ws, null), &existing, &diag);
+    var read: usize = 0;
+    for (snap) |s| if (s.text != null) {
+        read += 1;
+        try testing.expect(std.mem.endsWith(u8, s.src.path, rel));
+    };
+    try testing.expectEqual(@as(usize, 1), read);
+
+    const r = try f.update("", &stub, false);
+    try testing.expectEqual(@as(usize, 1), r.changed);
+    try testing.expectEqual(@as(usize, 18), r.unchanged);
 }
 
 test "update: progress counts the passages to embed, excluding reusable ones" {

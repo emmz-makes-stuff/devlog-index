@@ -99,12 +99,15 @@ pub fn passages(arena: Allocator, src: sources.Source, text: []const u8) Allocat
 }
 
 /// Lines with trailing `\r` removed, tracking whether each is inside a fenced
-/// code block (fence lines themselves count as inside).
+/// code block (fence lines themselves count as inside) or an HTML comment
+/// (from a line starting `<!--` outside a fence to the line holding `-->`).
+/// Everything inside a comment is comment, fences included.
 const Lines = struct {
     it: std.mem.SplitIterator(u8, .scalar),
     in_fence: bool = false,
+    in_comment: bool = false,
 
-    const Line = struct { text: []const u8, fenced: bool };
+    const Line = struct { text: []const u8, fenced: bool, comment: bool = false };
 
     fn init(text: []const u8) Lines {
         return .{ .it = std.mem.splitScalar(u8, text, '\n') };
@@ -113,7 +116,15 @@ const Lines = struct {
     fn next(l: *Lines) ?Line {
         const raw = l.it.next() orelse return null;
         const line = std.mem.trimEnd(u8, raw, "\r");
+        if (l.in_comment) {
+            if (std.mem.indexOf(u8, line, "-->") != null) l.in_comment = false;
+            return .{ .text = line, .fenced = false, .comment = true };
+        }
         const trimmed = std.mem.trimStart(u8, line, " \t");
+        if (!l.in_fence and std.mem.startsWith(u8, trimmed, "<!--")) {
+            l.in_comment = std.mem.indexOf(u8, trimmed["<!--".len..], "-->") == null;
+            return .{ .text = line, .fenced = false, .comment = true };
+        }
         if (std.mem.startsWith(u8, trimmed, "```") or std.mem.startsWith(u8, trimmed, "~~~")) {
             l.in_fence = !l.in_fence;
             return .{ .text = line, .fenced = true };
@@ -127,7 +138,7 @@ fn isBlank(s: []const u8) bool {
 }
 
 fn headingLevel(line: Lines.Line) usize {
-    if (line.fenced) return 0;
+    if (line.fenced or line.comment) return 0;
     var n: usize = 0;
     while (n < line.text.len and line.text[n] == '#') n += 1;
     if (n == 0 or n >= line.text.len or line.text[n] != ' ') return 0;
@@ -145,20 +156,11 @@ pub fn chunkNote(arena: Allocator, text: []const u8) Allocator.Error!Chunked {
     var title: ?[]const u8 = null;
     var paragraphs: std.ArrayList([]const u8) = .empty;
     var para: std.ArrayList(u8) = .empty;
-    var in_comment = false;
 
     var lines: Lines = .init(text);
     while (lines.next()) |line| {
+        if (line.comment) continue;
         if (!line.fenced) {
-            if (in_comment) {
-                if (std.mem.indexOf(u8, line.text, "-->") != null) in_comment = false;
-                continue;
-            }
-            const trimmed = std.mem.trim(u8, line.text, " \t");
-            if (std.mem.startsWith(u8, trimmed, "<!--")) {
-                in_comment = std.mem.indexOf(u8, trimmed, "-->") == null;
-                continue;
-            }
             if (title == null and headingLevel(line) == 1) {
                 title = std.mem.trim(u8, line.text[2..], " \t");
                 continue;
@@ -360,6 +362,57 @@ test "chunkNote: short note is one passage; fences and multi-line comments" {
     try testing.expectEqualStrings("Just text.", untitled[0]);
 }
 
+test "chunkNote: a fence inside a comment is comment and does not keep it open" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The fence's body never reaches a passage.
+    const hidden = (try chunkNote(arena,
+        \\# T
+        \\<!--
+        \\```
+        \\SECRET-FENCE
+        \\```
+        \\-->
+        \\After.
+    )).passages;
+    try testing.expectEqual(@as(usize, 1), hidden.len);
+    try testing.expectEqualStrings("T\n\nAfter.", hidden[0]);
+
+    // An unclosed fence inside the comment, and `-->` on a fenced-looking
+    // line, still end the comment; what follows is ordinary text.
+    const unbalanced = (try chunkNote(arena,
+        \\# T
+        \\<!-- draft
+        \\```zig
+        \\const x = 1; -->
+        \\# not the title
+        \\
+        \\Body.
+    )).passages;
+    try testing.expectEqual(@as(usize, 1), unbalanced.len);
+    try testing.expectEqualStrings("T\n\n# not the title\n\nBody.", unbalanced[0]);
+}
+
+test "chunkSections: a fence inside a comment does not swallow the next heading" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const out = try chunkSections(arena, "x design",
+        \\# Design
+        \\## A
+        \\<!--
+        \\```
+        \\-->
+        \\Alpha.
+        \\## B
+        \\Beta.
+    );
+    try testing.expectEqual(@as(usize, 2), out.len);
+    try testing.expect(std.mem.indexOf(u8, out[1], "## B") != null);
+}
+
 test "chunkSpec: purpose plus one passage per requirement with scenarios" {
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();
@@ -458,7 +511,7 @@ test "fixture end to end: no excluded text reaches a passage" {
     const ws = try workspace.resolve(arena, testing.io, test_options.fixture_workspace, &diag);
     var active_delta_seen = false;
     var total: usize = 0;
-    for (try sources.discover(arena, testing.io, ws)) |src| {
+    for (try sources.discover(arena, testing.io, ws, null)) |src| {
         const text = try std.Io.Dir.cwd().readFileAlloc(testing.io, src.path, arena, .unlimited);
         const ps = (try passages(arena, src, text)).passages;
         try testing.expect(ps.len > 0);

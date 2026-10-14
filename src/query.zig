@@ -200,12 +200,17 @@ pub fn ftsQuery(arena: Allocator, text: []const u8) Allocator.Error![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;
     while (i < text.len) {
-        if (!isTermByte(text[i])) {
-            i += 1;
+        const c = charAt(text, i);
+        if (!c.term) {
+            i += c.len;
             continue;
         }
         const start = i;
-        while (i < text.len and isTermByte(text[i])) i += 1;
+        while (i < text.len) {
+            const d = charAt(text, i);
+            if (!d.term) break;
+            i += d.len;
+        }
         if (out.items.len > 0) try out.appendSlice(arena, " OR ");
         try out.append(arena, '"');
         try out.appendSlice(arena, text[start..i]);
@@ -214,8 +219,42 @@ pub fn ftsQuery(arena: Allocator, text: []const u8) Allocator.Error![]const u8 {
     return out.items;
 }
 
-fn isTermByte(b: u8) bool {
-    return std.ascii.isAlphanumeric(b) or b >= 0x80;
+const Char = struct { len: usize, term: bool };
+
+/// The UTF-8 character at `i`. ASCII letters and digits are term characters,
+/// and so is other text, except the Unicode punctuation and symbols that
+/// FTS5's unicode61 tokenizer also splits on. A byte that does not start
+/// valid UTF-8 counts as a one-byte term character.
+fn charAt(text: []const u8, i: usize) Char {
+    const b = text[i];
+    if (b < 0x80) return .{ .len = 1, .term = std.ascii.isAlphanumeric(b) };
+    const n = std.unicode.utf8ByteSequenceLength(b) catch return .{ .len = 1, .term = true };
+    if (i + n > text.len) return .{ .len = 1, .term = true };
+    const cp = std.unicode.utf8Decode(text[i..][0..n]) catch return .{ .len = 1, .term = true };
+    return .{ .len = n, .term = !isSeparator(cp) };
+}
+
+/// Punctuation and symbol blocks (dashes, curly quotes, ellipsis, spaces,
+/// arrows, CJK and fullwidth punctuation). Letters and numbers inside these
+/// ranges (ª µ º, superscripts and fractions) are left out.
+fn isSeparator(cp: u21) bool {
+    return switch (cp) {
+        0x00A0...0x00A9, 0x00AB...0x00B1, 0x00B4, 0x00B6...0x00B8, 0x00BB, 0x00BF, 0x00D7, 0x00F7 => true,
+        0x2000...0x206F, // General Punctuation
+        0x2190...0x23FF, // Arrows, Mathematical Operators, Miscellaneous Technical
+        0x2500...0x27BF, // Box Drawing through Dingbats
+        0x2E00...0x2E7F, // Supplemental Punctuation
+        0x3000...0x3003,
+        0x3008...0x3020,
+        0x3030,
+        0xFE30...0xFE6F, // CJK Compatibility and Small Form Variants
+        0xFF01...0xFF0F,
+        0xFF1A...0xFF20,
+        0xFF3B...0xFF40,
+        0xFF5B...0xFF65,
+        => true,
+        else => false,
+    };
 }
 
 /// Passage ids of the top `k` by `bm25()`, best first.
@@ -505,6 +544,18 @@ test "ftsQuery quotes every term and drops punctuation" {
     try testing.expectEqualStrings("\"say\" OR \"hi\" OR \"x\" OR \"NOT\" OR \"col\" OR \"y\"", try ftsQuery(a, "say \"hi\" * -x NOT col: y"));
     try testing.expectEqualStrings("\"café\" OR \"naïve\"", try ftsQuery(a, "café/naïve"));
     try testing.expectEqualStrings("", try ftsQuery(a, " \"*-: "));
+}
+
+test "ftsQuery splits on Unicode punctuation, not on letters" {
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const a = arena_state.allocator();
+    try testing.expectEqualStrings("\"retry\" OR \"backoff\"", try ftsQuery(a, "retry—backoff"));
+    try testing.expectEqualStrings("\"don\" OR \"t\"", try ftsQuery(a, "don’t"));
+    try testing.expectEqualStrings("\"wait\" OR \"what\"", try ftsQuery(a, "“wait…what”"));
+    try testing.expectEqualStrings("\"a\" OR \"b\"", try ftsQuery(a, "a\u{00A0}b → «»"));
+    try testing.expectEqualStrings("\"µs\" OR \"日本語\" OR \"x²\"", try ftsQuery(a, "µs、日本語。x²"));
+    try testing.expectEqualStrings("\"a\xffb\"", try ftsQuery(a, "a\xffb"));
 }
 
 /// An index built by hand: three passages with known 3-d vectors.

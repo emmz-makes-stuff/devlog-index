@@ -104,31 +104,87 @@ pub fn stripDatePrefix(dir: []const u8) []const u8 {
 }
 
 /// Every indexed file of every member whose status is `ok`, sorted by path.
-pub fn discover(arena: Allocator, io: Io, ws: workspace.Workspace) ![]Source {
-    var list: std.ArrayList(Source) = .empty;
+/// Symlinked files and directories are followed and indexed at the link's
+/// path; a directory whose target was already visited is skipped, so a loop
+/// ends. A link that leads nowhere (or loops on itself) is skipped, and its
+/// path is appended to `broken` when given.
+pub fn discover(arena: Allocator, io: Io, ws: workspace.Workspace, broken: ?*std.ArrayList([]const u8)) ![]Source {
+    var w: Walk = .{ .arena = arena, .io = io, .broken = broken };
     for (ws.members) |m| {
         if (m.status != .ok) continue;
-        const member_name = std.fs.path.basename(m.path);
-        const openspec_path = try std.fs.path.join(arena, &.{ m.path, "openspec" });
-        var dir = try Io.Dir.cwd().openDir(io, openspec_path, .{ .iterate = true });
-        defer dir.close(io);
-        var walker = try dir.walk(arena);
-        defer walker.deinit();
-        while (try walker.next(io)) |entry| {
-            if (entry.kind != .file) continue;
-            const rel = try arena.dupe(u8, entry.path);
-            if (std.fs.path.sep != '/') std.mem.replaceScalar(u8, rel, std.fs.path.sep, '/');
-            const class = classify(rel) orelse continue;
-            try list.append(arena, .{
-                .member = member_name,
-                .path = try std.fs.path.join(arena, &.{ openspec_path, rel }),
-                .rel = try std.fmt.allocPrint(arena, "openspec/{s}", .{rel}),
-                .class = class,
-            });
+        w.member = std.fs.path.basename(m.path);
+        w.openspec = try std.fs.path.join(arena, &.{ m.path, "openspec" });
+        try w.dir(w.openspec, "");
+    }
+    std.mem.sort(Source, w.list.items, {}, lessByPath);
+    return w.list.items;
+}
+
+const Walk = struct {
+    arena: Allocator,
+    io: Io,
+    broken: ?*std.ArrayList([]const u8),
+    member: []const u8 = "",
+    openspec: []const u8 = "",
+    list: std.ArrayList(Source) = .empty,
+    /// Real paths of the directories walked so far.
+    visited: std.StringHashMapUnmanaged(void) = .empty,
+
+    /// `rel` is `abs` relative to the member's `openspec/`, `/`-separated.
+    fn dir(w: *Walk, abs: []const u8, rel: []const u8) !void {
+        const real = try Io.Dir.cwd().realPathFileAlloc(w.io, abs, w.arena);
+        if ((try w.visited.getOrPut(w.arena, real)).found_existing) return;
+
+        var d = try Io.Dir.cwd().openDir(w.io, abs, .{ .iterate = true });
+        defer d.close(w.io);
+        // By name, so which path wins an already-visited target is the same
+        // on every run.
+        var entries: std.ArrayList(Io.Dir.Entry) = .empty;
+        var it = d.iterate();
+        while (try it.next(w.io)) |entry|
+            try entries.append(w.arena, .{ .name = try w.arena.dupe(u8, entry.name), .kind = entry.kind, .inode = entry.inode });
+        std.mem.sort(Io.Dir.Entry, entries.items, {}, lessByName);
+        for (entries.items) |entry| {
+            const child_abs = try std.fs.path.join(w.arena, &.{ abs, entry.name });
+            const child_rel = if (rel.len == 0)
+                try w.arena.dupe(u8, entry.name)
+            else
+                try std.fmt.allocPrint(w.arena, "{s}/{s}", .{ rel, entry.name });
+            switch (entry.kind) {
+                .directory => try w.dir(child_abs, child_rel),
+                .file => try w.file(child_abs, child_rel),
+                .sym_link => {
+                    const st = d.statFile(w.io, entry.name, .{}) catch |err| switch (err) {
+                        error.FileNotFound, error.NotDir, error.SymLinkLoop => {
+                            if (w.broken) |b| try b.append(w.arena, child_abs);
+                            continue;
+                        },
+                        else => |e| return e,
+                    };
+                    switch (st.kind) {
+                        .directory => try w.dir(child_abs, child_rel),
+                        .file => try w.file(child_abs, child_rel),
+                        else => {},
+                    }
+                },
+                else => {},
+            }
         }
     }
-    std.mem.sort(Source, list.items, {}, lessByPath);
-    return list.items;
+
+    fn file(w: *Walk, abs: []const u8, rel: []const u8) !void {
+        const class = classify(rel) orelse return;
+        try w.list.append(w.arena, .{
+            .member = w.member,
+            .path = abs,
+            .rel = try std.fmt.allocPrint(w.arena, "openspec/{s}", .{rel}),
+            .class = class,
+        });
+    }
+};
+
+fn lessByName(_: void, a: Io.Dir.Entry, b: Io.Dir.Entry) bool {
+    return std.mem.order(u8, a.name, b.name) == .lt;
 }
 
 fn lessByPath(_: void, a: Source, b: Source) bool {
@@ -204,7 +260,7 @@ test "discover lists exactly the fixture's indexed files" {
 
     var diag: workspace.Diag = .{};
     const ws = try workspace.resolve(arena, testing.io, test_options.fixture_workspace, &diag);
-    const found = try discover(arena, testing.io, ws);
+    const found = try discover(arena, testing.io, ws, null);
 
     const want = [_][]const u8{
         "alpha/openspec/changes/add-cache/devlog/20260401-1000-decision-cache-ttl.md",
@@ -242,4 +298,49 @@ test "discover lists exactly the fixture's indexed files" {
     }
     try testing.expect(found[4].class.archived);
     try testing.expectEqualStrings("add-retry", found[4].class.change.?);
+}
+
+test "discover follows symlinked files and directories, skips a loop, reports a broken link" {
+    const testutil = @import("testutil.zig");
+    var f = try testutil.Fixture.init();
+    defer f.deinit();
+    const d = f.tmp.dir;
+    const io = testing.io;
+
+    try f.write("elsewhere/20260402-0900-decision-linked.md", "# Linked\n\nA note kept outside the tree.\n");
+    try f.write("elsewhere/specs/linked/spec.md", "# Linked spec\n\nA spec kept outside the tree.\n");
+    try d.symLink(io, try f.path("elsewhere/20260402-0900-decision-linked.md"), "alpha/openspec/changes/add-cache/devlog/20260402-0900-decision-linked.md", .{});
+    try d.symLink(io, try f.path("elsewhere/specs/linked"), "beta/openspec/specs/linked", .{ .is_directory = true });
+    try d.symLink(io, try f.path("alpha/openspec/specs"), "alpha/openspec/specs/auth/loop", .{ .is_directory = true });
+    try d.symLink(io, try f.path("elsewhere/gone.md"), "alpha/openspec/changes/add-cache/devlog/20260403-0900-note-gone.md", .{});
+
+    var diag: workspace.Diag = .{};
+    const ws = try workspace.resolve(f.arena(), io, f.root, &diag);
+    var broken: std.ArrayList([]const u8) = .empty;
+    const found = try discover(f.arena(), io, ws, &broken);
+
+    try testing.expectEqual(@as(usize, 21), found.len);
+    var note = false;
+    var spec = false;
+    for (found) |s| {
+        try testing.expect(std.mem.indexOf(u8, s.rel, "/loop/") == null);
+        if (std.mem.eql(u8, s.rel, "openspec/changes/add-cache/devlog/20260402-0900-decision-linked.md")) {
+            note = true;
+            try testing.expectEqual(Artifact.note, s.class.artifact);
+        }
+        if (std.mem.eql(u8, s.rel, "openspec/specs/linked/spec.md")) {
+            spec = true;
+            try testing.expectEqualStrings("beta", s.member);
+            try testing.expectEqualStrings("linked", s.class.capability.?);
+        }
+    }
+    try testing.expect(note and spec);
+    try testing.expectEqual(@as(usize, 1), broken.items.len);
+    try testing.expect(std.mem.endsWith(u8, broken.items[0], "20260403-0900-note-gone.md"));
+
+    // update indexes the linked files and reports the broken link.
+    var stub: testutil.Stub = .{};
+    const r = try f.update("", &stub, false);
+    try testing.expectEqual(@as(usize, 21), r.added);
+    try testing.expectEqual(@as(usize, 1), r.broken_links.len);
 }

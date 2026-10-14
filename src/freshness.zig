@@ -56,7 +56,7 @@ pub fn detect(arena: Allocator, io: Io, ws: workspace.Workspace, db: ?dbm.Db, di
 
     var c: Changes = .{};
     const cwd = Io.Dir.cwd();
-    for (try sources.discover(arena, io, ws)) |src| {
+    for (try sources.discover(arena, io, ws, null)) |src| {
         const old = indexed.getPtr(src.path) orelse {
             c.added += 1;
             continue;

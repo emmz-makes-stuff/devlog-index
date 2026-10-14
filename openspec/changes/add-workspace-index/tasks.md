@@ -78,7 +78,7 @@
 
 ## 14. Review fixes: indexing and query edge cases
 
-- [ ] 14.1 `update` skips reading and hashing a file whose size and mtime match its `files` row, as freshness does; test that an unchanged update reads no file bodies and still detects a same-size edit with a new mtime
-- [ ] 14.2 Discovery follows symlinked files and directories under a member's `openspec/`, with a guard against loops (a directory target already visited is skipped) and a warning for each broken link; test with a symlinked note, a symlinked spec directory, a loop and a broken link
-- [ ] 14.3 The FTS query builder splits terms on Unicode punctuation (dashes, curly quotes, ellipsis and the like), not only ASCII; test `retry—backoff` and `don’t`
-- [ ] 14.4 The chunker treats everything inside an HTML comment as comment, fences included, so a fenced block inside `<!-- … -->` neither leaks into passages nor keeps the comment open; test both; verify `make gates`
+- [x] 14.1 `update` skips reading and hashing a file whose size and mtime match its `files` row, as freshness does; test that an unchanged update reads no file bodies and still detects a same-size edit with a new mtime
+- [x] 14.2 Discovery follows symlinked files and directories under a member's `openspec/`, with a guard against loops (a directory target already visited is skipped) and a warning for each broken link; test with a symlinked note, a symlinked spec directory, a loop and a broken link
+- [x] 14.3 The FTS query builder splits terms on Unicode punctuation (dashes, curly quotes, ellipsis and the like), not only ASCII; test `retry—backoff` and `don’t`
+- [x] 14.4 The chunker treats everything inside an HTML comment as comment, fences included, so a fenced block inside `<!-- … -->` neither leaks into passages nor keeps the comment open; test both; verify `make gates`

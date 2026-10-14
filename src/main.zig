@@ -79,6 +79,7 @@ pub fn main(init: std.process.Init) !void {
             error.OutOfMemory => return err,
             else => fatal(diag.message),
         };
+        for (r.broken_links) |p| std.debug.print("devlog-index: warning: broken symlink {s}; it is skipped\n", .{p});
         const elapsed_ms: u64 = @intCast(@divFloor(std.Io.Timestamp.now(init.io, .awake).nanoseconds - t0.nanoseconds, std.time.ns_per_ms));
         try out.print(
             "devlog-index: {s}: {d} files changed ({d} added, {d} changed, {d} removed), {d} unchanged; " ++
