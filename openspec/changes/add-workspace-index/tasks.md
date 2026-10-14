@@ -82,3 +82,7 @@
 - [x] 14.2 Discovery follows symlinked files and directories under a member's `openspec/`, with a guard against loops (a directory target already visited is skipped) and a warning for each broken link; test with a symlinked note, a symlinked spec directory, a loop and a broken link
 - [x] 14.3 The FTS query builder splits terms on Unicode punctuation (dashes, curly quotes, ellipsis and the like), not only ASCII; test `retry—backoff` and `don’t`
 - [x] 14.4 The chunker treats everything inside an HTML comment as comment, fences included, so a fenced block inside `<!-- … -->` neither leaks into passages nor keeps the comment open; test both; verify `make gates`
+
+## 15. Review fixes: symlink precedence
+
+- [ ] 15.1 Discovery walks every member's real folders first, without following symlinked folders, then follows the queued symlinked folders in path order (links found inside them are queued too), so a folder reachable both directly and through a link is always indexed at its real path; test a sibling link (`specs/alias` → `specs/auth`) and a link from `changes/` into `specs/`, both indexed under the real path only; verify `make gates`
