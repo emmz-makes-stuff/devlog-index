@@ -122,9 +122,10 @@ used. The follow-up skill change makes `update` routine at section done and pick
   repo. Integration tests run the CLI against a temp copy of it.
 - Model-dependent tests (embedding, semantic ranking, end-to-end query) are skipped unless
   `DEVLOG_INDEX_TEST_MODEL` points at a GGUF file (memlite's pattern), so `zig build test` stays hermetic.
-- The real workspace's golden set lives at `<real-workspace>/.devlog-index/golden.json`, seeded with the five
-  spike questions; never committed here (client content). The paraphrase question that missed both
-  methods in the spike is marked as a known miss, so `eval` is a usable gate from the start while that
+- The real workspace's golden set lives at `<real-workspace>/.devlog-index/golden.json`, seeded with five
+  questions in the spike's five shapes (the spike's own questions were never recorded); never committed
+  here (client content). The paraphrase question, which shares no key words with its note, is marked as
+  a known miss, so `eval` is a usable gate from the start while that
   question still measures paraphrase handling (retrieval-eval, Known misses).
 - `golden.json` is `{"questions": [{"question": "…", "expected": ["<member>/openspec/…"], "known_miss":
   false}]}`, with paths relative to the workspace root and no unknown fields. `eval` grades the default

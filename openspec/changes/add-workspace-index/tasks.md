@@ -48,7 +48,7 @@
 ## 9. Retrieval evaluation
 
 - [x] 9.1 Implement `eval`: read `.devlog-index/golden.json`, run each question with defaults, report ranks, distinguish "not indexed" from "not ranked", exit 0 only if all expected sources are in the top ten, with entries marked as known misses reported but not failing (and reported as unexpectedly found when they land in the top ten); verify integration tests with a fixture golden set covering all-found, one-missed, missing golden set, not-indexed, and a known miss both still missing and now found
-- [ ] 9.2 Seed `<real-workspace>/.devlog-index/golden.json` with the five spike questions and their expected sources (outside this repo), marking the paraphrase question as a known miss (it ranked outside the top ten for both methods in the spike), run `cd <real-workspace> && devlog-index eval`, and tune the chunk threshold and k against it if needed; verify `eval` exits 0, or record each remaining miss and the reason in a devlog note and stop to agree it with Emmz
+- [x] 9.2 Seed `<real-workspace>/.devlog-index/golden.json` with five questions in the spike's shapes and their expected sources (outside this repo; the spike's own questions were never recorded), marking the paraphrase question as a known miss, run `cd <real-workspace> && devlog-index eval`, and tune the chunk threshold and k against it if needed; verify `eval` exits 0, or record each remaining miss and the reason in a devlog note and stop to agree it with Emmz
 
 ## 10. Install and integration
 
