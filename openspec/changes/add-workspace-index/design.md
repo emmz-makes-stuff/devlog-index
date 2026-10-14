@@ -126,6 +126,11 @@ used. The follow-up skill change makes `update` routine at section done and pick
   spike questions; never committed here (client content). The paraphrase question that missed both
   methods in the spike is marked as a known miss, so `eval` is a usable gate from the start while that
   question still measures paraphrase handling (retrieval-eval, Known misses).
+- `golden.json` is `{"questions": [{"question": "…", "expected": ["<member>/openspec/…"], "known_miss":
+  false}]}`, with paths relative to the workspace root and no unknown fields. `eval` grades the default
+  top ten. For a source outside it, `eval` shows the source's rank in each method's own list, searched to
+  depth 100. `eval` fails when semantic search can't run, because lexical-only ranks aren't the default
+  query's (decided with Emmz, 2026-10-14).
 
 ### D11. Gate commands
 Single stack; run from the repo root. All are non-interactive and exit non-zero on failure. On macOS,

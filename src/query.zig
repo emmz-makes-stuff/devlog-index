@@ -106,34 +106,55 @@ fn runInner(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
     defer db.close();
 
     var notices: std.ArrayList([]const u8) = .empty;
+    if (try staleness(arena, io, ws, db)) |n| try notices.append(arena, n);
+    const r = try rank(arena, gpa, db, opts);
+    if (r.semantic_skipped) |n| try notices.append(arena, n);
+    const results = try load(arena, db, try merge(arena, r.lexical, r.semantic));
+    for (results) |*res| res.notices = notices.items;
+    return .{ .results = results, .notices = notices.items };
+}
 
+/// A notice when files changed since the last update, or when that cannot
+/// be checked; null when the index is up to date.
+pub fn staleness(arena: Allocator, io: Io, ws: workspace.Workspace, db: dbm.Db) !?[]const u8 {
     var fdiag: freshness.Diag = .{};
-    if (freshness.detect(arena, io, ws, db, &fdiag)) |changes| {
-        if (changes.total() > 0) try notices.append(arena, try std.fmt.allocPrint(
-            arena,
-            "{d} file{s} changed since the last update {s} not indexed yet; run: devlog-index update",
-            .{ changes.total(), if (changes.total() == 1) "" else "s", if (changes.total() == 1) "is" else "are" },
-        ));
-    } else |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.ReadFailed => try notices.append(arena, try std.fmt.allocPrint(arena, "could not check whether the index is up to date: {s}", .{fdiag.message})),
-        else => try notices.append(arena, try std.fmt.allocPrint(arena, "could not check whether the index is up to date ({s})", .{@errorName(err)})),
-    }
+    const changes = freshness.detect(arena, io, ws, db, &fdiag) catch |err| return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.ReadFailed => try std.fmt.allocPrint(arena, "could not check whether the index is up to date: {s}", .{fdiag.message}),
+        else => try std.fmt.allocPrint(arena, "could not check whether the index is up to date ({s})", .{@errorName(err)}),
+    };
+    if (changes.total() == 0) return null;
+    return try std.fmt.allocPrint(
+        arena,
+        "{d} file{s} changed since the last update {s} not indexed yet; run: devlog-index update",
+        .{ changes.total(), if (changes.total() == 1) "" else "s", if (changes.total() == 1) "is" else "are" },
+    );
+}
 
+/// Both methods' ranked passage ids for one query, before the merge.
+pub const Ranking = struct {
+    /// Top `opts.k` by `bm25()`, best first.
+    lexical: []const i64,
+    /// Top `opts.k` by cosine, best first; empty when semantic search was skipped.
+    semantic: []const i64,
+    /// The notice saying why semantic search was skipped, or null if it ran.
+    semantic_skipped: ?[]const u8 = null,
+};
+
+/// Ranks `opts.text` both ways in the open index `db`.
+pub fn rank(arena: Allocator, gpa: Allocator, db: dbm.Db, opts: Options) !Ranking {
     const lex = try lexical(arena, db, opts.text, opts.k);
     var sem: []const i64 = &.{};
+    var skip: ?[]const u8 = null;
     if (try semanticSkipReason(arena, db, opts)) |why| {
-        try notices.append(arena, try skipped(arena, why));
+        skip = try skipped(arena, why);
     } else {
         const dim = std.fmt.parseInt(u32, (try index.readSetting(arena, db, "dim")).?, 10) catch return error.QueryFailed;
         if (embedQuery(arena, gpa, opts.provider.?, dim, opts.text)) |vec| {
             sem = try semantic(arena, db, vec, opts.k);
-        } else |why| try notices.append(arena, try skipped(arena, try describeEmbedFailure(arena, why, dim)));
+        } else |why| skip = try skipped(arena, try describeEmbedFailure(arena, why, dim));
     }
-
-    const results = try load(arena, db, try merge(arena, lex, sem));
-    for (results) |*r| r.notices = notices.items;
-    return .{ .results = results, .notices = notices.items };
+    return .{ .lexical = lex, .semantic = sem, .semantic_skipped = skip };
 }
 
 fn skipped(arena: Allocator, why: []const u8) Allocator.Error![]const u8 {

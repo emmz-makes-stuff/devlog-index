@@ -4,6 +4,7 @@ const workspace = @import("workspace.zig");
 const update = @import("update.zig");
 const status = @import("status.zig");
 const query = @import("query.zig");
+const eval = @import("eval.zig");
 const model_url = @import("model_url.zig");
 
 const usage =
@@ -151,6 +152,24 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (std.mem.eql(u8, args[1], "eval")) {
+        if (args.len > 2) usageExit("usage: devlog-index eval\n");
+        const ws = resolveWorkspace(init, arena);
+        const home = init.environ_map.get("HOME") orelse fatal("HOME is not set; it locates the model cache");
+        var mp = try update.ModelProvider.cachedForQuery(arena, init.gpa, init.io, home);
+        defer mp.deinit();
+        var diag: eval.Diag = .{};
+        const r = eval.run(arena, init.gpa, init.io, ws, .{ .provider = mp.provider() }, &diag) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => fatal(diag.message),
+        };
+        for (r.notices) |n| std.debug.print("devlog-index: notice: {s}\n", .{n});
+        try eval.writeText(r, out);
+        try out.flush();
+        if (!r.passed()) std.process.exit(1);
+        return;
+    }
+
     if (std.mem.eql(u8, args[1], "bench-cold")) {
         bench.run(init, args[2..], out) catch |err| switch (err) {
             error.Usage => {
@@ -207,4 +226,5 @@ test {
     _ = @import("freshness.zig");
     _ = @import("status.zig");
     _ = @import("query.zig");
+    _ = @import("eval.zig");
 }
