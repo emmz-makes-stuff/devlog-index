@@ -86,3 +86,21 @@
 ## 15. Review fixes: symlink precedence
 
 - [x] 15.1 Discovery walks every member's real folders first, without following symlinked folders, then follows the queued symlinked folders in path order (links found inside them are queued too), so a folder reachable both directly and through a link is always indexed at its real path; test a sibling link (`specs/alias` → `specs/auth`) and a link from `changes/` into `specs/`, both indexed under the real path only; verify `make gates`
+
+## 16. Review fixes: index swap and concurrency
+
+- [ ] 16.1 `update --rebuild` holds an exclusive, non-blocking lock on `index.db.rebuild.lock` for the whole rebuild, so a second rebuild fails cleanly ("locked by another devlog-index update; the index is unchanged") instead of deleting the first one's files; test two overlapping rebuilds
+- [ ] 16.2 `swapIn` falls back to deleting the live index and its sidecar files and renaming the rebuilt one into place when the live file exists but cannot be opened or read as a database, so `--rebuild` repairs a corrupt index as the error messages promise; test with a live `index.db` that is not a database
+- [ ] 16.3 `swapIn` treats only `FileNotFound` from `access(live)` as "no index yet"; any other error fails the update without deleting anything; test that a non-`FileNotFound` access error leaves the live files in place
+- [ ] 16.4 A query ranks and loads its passages inside one read transaction on its connection, so an update or rebuild that commits mid-query cannot change the ids between ranking and loading; test that a commit between rank and load does not change the results or produce an orphan notice; verify `make gates`
+
+## 17. Review fixes: chunking and threads
+
+- [ ] 17.1 Fence tracking records the opening fence's character (and length) and closes only on a matching fence, per CommonMark, so a `~~~` line inside a ```` ``` ```` block (and the reverse) stays inside the block; test in a note and in a design section
+- [ ] 17.2 A comment that closes on the same line it opens keeps the text after `-->` (and a multi-line comment keeps the text after its closing `-->`); test `<!-- Section: 3 --> Decided …` and a multi-line comment
+- [ ] 17.3 Thread expansion includes later notes written in the same minute as the result note, ordering by (note time, path) and excluding the result itself; test a stopped note and an answer that share a minute; verify `make gates`
+
+## 18. Review fixes: shared change detection and FTS storage
+
+- [ ] 18.1 One helper, shared by `freshness.detect` and `update.takeSnapshot`, loads the indexed `files` rows, lists missing members, and decides whether a file is unchanged (size and mtime match a well-formed hash) or vanished; both callers use it, and their existing tests still pass unchanged
+- [ ] 18.2 `passages_fts` becomes an external-content FTS5 table over `passages` (`content='passages'`, `content_rowid='id'`, same tokenizer), with deletes through the FTS `'delete'` command; `schema_version` goes to `2`, so an old index is refused with the rebuild message; test that lexical ranking is unchanged on the fixture and that a version-1 index is refused; verify `make gates`
