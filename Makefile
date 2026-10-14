@@ -18,7 +18,7 @@ endif
 
 CHANGES := $(notdir $(patsubst %/,%,$(filter-out %/archive/,$(wildcard openspec/changes/*/))))
 
-.PHONY: build test format validate changes gates deps libc
+.PHONY: build release test format validate changes gates deps libc
 
 # Writes the SDK 26 libc file (see SDK26 above); a no-op without that SDK, which
 # `make deps` reports.
@@ -29,6 +29,10 @@ libc:
 
 build: libc
 	@zig build; code=$$?; echo "BUILD_EXIT:$$code"; exit $$code
+
+# The installable binary (install.sh); not a gate.
+release: libc
+	@zig build -Doptimize=ReleaseFast; code=$$?; echo "RELEASE_EXIT:$$code"; exit $$code
 
 test: libc
 	@zig build test --summary all; code=$$?; echo "TEST_EXIT:$$code"; exit $$code

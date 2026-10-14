@@ -52,5 +52,5 @@
 
 ## 10. Install and integration
 
-- [ ] 10.1 Add `install.sh` (ReleaseFast build, copy to `~/.local/bin`) and complete `README.md` with install, `init`, `update`, `query`, `status`, `eval`, the `--json` line contract and where workspace data lives; verify a fresh install runs `devlog-index status` from inside a member repo of the real workspace and the README's commands work as written
-- [ ] 10.2 End-to-end check from a member repo: add a devlog note in one real-workspace member, run `update` from another, and query for it; verify the new note is returned with correct labels and that `zig build`, `zig build test --summary all` and `zig fmt --check src build.zig` all exit 0
+- [x] 10.1 Add `install.sh` (ReleaseFast build, copy to `~/.local/bin`) and complete `README.md` with install, `init`, `update`, `query`, `status`, `eval`, the `--json` line contract and where workspace data lives; verify a fresh install runs `devlog-index status` from inside a member repo of the real workspace and the README's commands work as written
+- [x] 10.2 End-to-end check from a member repo: add a devlog note in one real-workspace member, run `update` from another, and query for it; verify the new note is returned with correct labels and that `zig build`, `zig build test --summary all` and `zig fmt --check src build.zig` all exit 0
