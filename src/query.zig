@@ -28,6 +28,7 @@ const index = @import("index.zig");
 const freshness = @import("freshness.zig");
 const update = @import("update.zig");
 const model_url = @import("model_url.zig");
+const builtin = @import("builtin");
 
 pub const default_k = 5;
 pub const max_k = 100;
@@ -82,6 +83,10 @@ pub const Diag = struct {
     message: []const u8 = "",
 };
 
+/// Tests only: runs between ranking and loading, inside the query's read
+/// transaction, so a test can commit from another connection there.
+var test_between_rank_and_load: ?struct { ctx: *anyopaque, run: *const fn (*anyopaque) anyerror!void } = null;
+
 pub fn run(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, opts: Options, diag: *Diag) Error!Outcome {
     return runInner(arena, gpa, io, ws, opts, diag) catch |err| {
         if (err == error.OutOfMemory) return error.OutOfMemory;
@@ -102,11 +107,16 @@ fn runInner(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
         },
     };
     defer db.close();
+    // One read transaction, so every read sees one snapshot: an update or
+    // rebuild that commits mid-query cannot move the ids between rank and load.
+    try db.exec("BEGIN");
+    defer db.exec("COMMIT") catch {};
 
     var notices: std.ArrayList([]const u8) = .empty;
     if (try staleness(arena, io, ws, db)) |n| try notices.append(arena, n);
     const r = try rank(arena, gpa, db, opts, diag);
     if (r.semantic_skipped) |n| try notices.append(arena, n);
+    if (builtin.is_test) if (test_between_rank_and_load) |hook| try hook.run(hook.ctx);
     const loaded = try load(arena, db, try merge(arena, r.lexical, r.semantic));
     if (loaded.orphans > 0) try notices.append(arena, try std.fmt.allocPrint(arena, "{d} ranked passages belong to no indexed file and were skipped; rebuild the index with: {s}", .{ loaded.orphans, index.rebuild_command }));
     const results = loaded.results;
@@ -777,6 +787,34 @@ test "query: a ranked passage with no file row is skipped with a notice" {
     const last = o.notices[o.notices.len - 1];
     try testing.expect(std.mem.indexOf(u8, last, "belong to no indexed file") != null);
     try testing.expect(std.mem.indexOf(u8, last, index.rebuild_command) != null);
+}
+
+test "query: a commit between rank and load changes neither the results nor the notices" {
+    var f = try testutil.Fixture.init();
+    defer f.deinit();
+    var stub: testutil.Stub = .{};
+    _ = try f.update("", &stub, false);
+    const opts: Options = .{ .text = "retry policy", .provider = stub.provider(), .model_url = "test://stub" };
+    const want = try queryIn(&f, "", opts);
+    try testing.expect(want.results.len > 0);
+
+    const Wipe = struct {
+        fn run(ctx: *anyopaque) anyerror!void {
+            const fx: *testutil.Fixture = @ptrCast(@alignCast(ctx));
+            try fx.exec("DELETE FROM passages; DELETE FROM files");
+        }
+    };
+    test_between_rank_and_load = .{ .ctx = &f, .run = Wipe.run };
+    defer test_between_rank_and_load = null;
+    const got = try queryIn(&f, "", opts);
+
+    try testing.expectEqual(want.results.len, got.results.len);
+    for (want.results, got.results) |w, g| {
+        try testing.expectEqualStrings(w.path, g.path);
+        try testing.expectEqualStrings(w.text, g.text);
+    }
+    try testing.expectEqual(want.notices.len, got.notices.len);
+    try testing.expectEqual(@as(i64, 0), try f.count("SELECT count(*) FROM passages"));
 }
 
 test "query: a stale index is used with a notice counting the unindexed files" {

@@ -114,6 +114,16 @@ fn runInner(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
 
     if (!opts.rebuild) return updateAt(arena, gpa, io, ws, opts, final_path, diag);
 
+    // One rebuild at a time: they share the build path below, and each
+    // clears it. A second one fails as a second update does (`SqliteBusy`).
+    // The lock file stays behind; deleting it would race the next rebuild.
+    const lock_path = try std.fmt.allocPrint(arena, "{s}.rebuild.lock", .{final_path});
+    var lock = cwd.createFile(io, lock_path, .{ .lock = .exclusive, .lock_nonblocking = true, .truncate = false }) catch |err| switch (err) {
+        error.WouldBlock => return error.SqliteBusy,
+        else => |e| return e,
+    };
+    defer lock.close(io);
+
     // Build beside the old index, then swap it in; until the swap the old
     // index stays intact and usable.
     const tmp_path = try std.fmt.allocPrintSentinel(arena, "{s}.rebuild", .{final_path}, 0);
@@ -125,21 +135,43 @@ fn runInner(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
 }
 
 /// Make the rebuilt database at `built` the index at `live`. With no index
-/// yet it is renamed into place, after deleting any journal, WAL or
-/// shared-memory files left beside it. Otherwise its pages are copied into
-/// the live file through SQLite: renaming over a WAL database that a reader
-/// has open would pair the new file with the old `-wal`/`-shm` files.
+/// yet, or one SQLite cannot read, it is renamed into place, after deleting
+/// the live file and any journal, WAL or shared-memory files beside it.
+/// Otherwise its pages are copied into the live file through SQLite:
+/// renaming over a WAL database that a reader has open would pair the new
+/// file with the old `-wal`/`-shm` files.
 fn swapIn(arena: Allocator, io: Io, built: [:0]const u8, live: [:0]const u8) !void {
     const cwd = Io.Dir.cwd();
-    cwd.access(io, live, .{}) catch {
+    const replace = if (cwd.access(io, live, .{})) |_|
+        !try readable(live)
+    else |err| switch (err) {
+        error.FileNotFound => true,
+        else => |e| return e,
+    };
+    if (replace) {
         deleteDbFiles(arena, io, live);
         return cwd.rename(built, cwd, live, io);
-    };
+    }
     var src = try dbm.Db.open(built, .read_only);
     defer src.close();
     var dest = try dbm.Db.open(live, .read_write_create);
     defer dest.close();
     try dest.replaceWith(src);
+}
+
+/// False when SQLite cannot open `path` or read its schema (not a database,
+/// or corrupt). A lock is not unreadability: `SqliteBusy` is returned.
+fn readable(path: [:0]const u8) dbm.Error!bool {
+    var db = dbm.Db.open(path, .read_only) catch |err| switch (err) {
+        error.SqliteOpenFailed => return false,
+        else => |e| return e,
+    };
+    defer db.close();
+    _ = db.oneInt("SELECT count(*) FROM sqlite_schema") catch |err| switch (err) {
+        error.SqliteFailed => return false,
+        else => |e| return e,
+    };
+    return true;
 }
 
 /// The database file and its journal, WAL and shared-memory files.
@@ -834,6 +866,67 @@ test "swapIn with no live index deletes stale sidecar files before the rename" {
     try testing.expectEqualStrings("built", try f.tmp.dir.readFile(testing.io, ".devlog-index/index.db", &buf));
     for ([_][]const u8{ "-wal", "-shm", "-journal" }) |suffix|
         try testing.expectError(error.FileNotFound, f.tmp.dir.access(testing.io, try std.fmt.allocPrint(f.arena(), ".devlog-index/index.db{s}", .{suffix}), .{}));
+}
+
+test "rebuild: a second rebuild fails cleanly and leaves the first one's files alone" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var stub: Stub = .{};
+    const before = try f.update("", &stub, false);
+
+    // The first rebuild, mid-build: it holds the lock and owns the build path.
+    const live = try std.fs.path.join(f.arena(), &.{ f.root, ".devlog-index", "index.db" });
+    var first = try Io.Dir.cwd().createFile(testing.io, try std.fmt.allocPrint(f.arena(), "{s}.rebuild.lock", .{live}), .{ .lock = .exclusive, .truncate = false });
+    defer first.close(testing.io);
+    try f.write(".devlog-index/index.db.rebuild", "first rebuild's database");
+
+    var wdiag: workspace.Diag = .{};
+    const ws = try workspace.resolve(f.arena(), testing.io, f.root, &wdiag);
+    var diag: Diag = .{};
+    const embeds = stub.embeds;
+    try testing.expectError(error.UpdateFailed, run(f.arena(), testing.allocator, testing.io, ws, .{ .provider = stub.provider(), .model_url = "test://stub", .rebuild = true }, &diag));
+    try testing.expect(std.mem.indexOf(u8, diag.message, "locked by another devlog-index update") != null);
+    try testing.expectEqual(embeds, stub.embeds);
+
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("first rebuild's database", try f.tmp.dir.readFile(testing.io, ".devlog-index/index.db.rebuild", &buf));
+    try testing.expectEqual(@as(i64, @intCast(before.passages_total)), try f.count("SELECT count(*) FROM passages"));
+}
+
+test "rebuild: a live index that is not a database is replaced" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.write(".devlog-index/index.db", "this is not a database, it is long enough to have a header....................................................");
+    try f.write(".devlog-index/index.db-wal", "stale");
+    var stub: Stub = .{};
+    const r = try f.update("", &stub, true);
+    try testing.expectEqual(@as(usize, 19), r.added);
+    try testing.expectEqual(@as(i64, @intCast(r.passages_total)), try f.count("SELECT count(*) FROM passages"));
+    // The stale WAL was deleted; any WAL there now is the new index's own.
+    var buf: [8]u8 = undefined;
+    const wal = f.tmp.dir.readFile(testing.io, ".devlog-index/index.db-wal", &buf) catch |err| switch (err) {
+        error.FileNotFound => "",
+        else => |e| return e,
+    };
+    try testing.expect(!std.mem.eql(u8, wal, "stale"));
+}
+
+test "swapIn: an access error other than a missing file deletes nothing" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.write(".devlog-index/index.db.rebuild", "built");
+    try f.write(".devlog-index/index.db-wal", "a writer's WAL");
+    // A link to itself: access fails with a loop, not FileNotFound.
+    try f.tmp.dir.symLink(testing.io, "index.db", ".devlog-index/index.db", .{});
+
+    const live = try std.fs.path.joinZ(f.arena(), &.{ f.root, ".devlog-index", "index.db" });
+    if (swapIn(f.arena(), testing.io, try std.fmt.allocPrintSentinel(f.arena(), "{s}.rebuild", .{live}, 0), live)) |_|
+        return error.TestUnexpectedSuccess
+    else |_| {}
+
+    var buf: [32]u8 = undefined;
+    try testing.expectEqualStrings("a writer's WAL", try f.tmp.dir.readFile(testing.io, ".devlog-index/index.db-wal", &buf));
+    try testing.expectEqualStrings("built", try f.tmp.dir.readFile(testing.io, ".devlog-index/index.db.rebuild", &buf));
 }
 
 test "update: model mismatch is refused; --rebuild replaces the index" {

@@ -89,10 +89,10 @@
 
 ## 16. Review fixes: index swap and concurrency
 
-- [ ] 16.1 `update --rebuild` holds an exclusive, non-blocking lock on `index.db.rebuild.lock` for the whole rebuild, so a second rebuild fails cleanly ("locked by another devlog-index update; the index is unchanged") instead of deleting the first one's files; test two overlapping rebuilds
-- [ ] 16.2 `swapIn` falls back to deleting the live index and its sidecar files and renaming the rebuilt one into place when the live file exists but cannot be opened or read as a database, so `--rebuild` repairs a corrupt index as the error messages promise; test with a live `index.db` that is not a database
-- [ ] 16.3 `swapIn` treats only `FileNotFound` from `access(live)` as "no index yet"; any other error fails the update without deleting anything; test that a non-`FileNotFound` access error leaves the live files in place
-- [ ] 16.4 A query ranks and loads its passages inside one read transaction on its connection, so an update or rebuild that commits mid-query cannot change the ids between ranking and loading; test that a commit between rank and load does not change the results or produce an orphan notice; verify `make gates`
+- [x] 16.1 `update --rebuild` holds an exclusive, non-blocking lock on `index.db.rebuild.lock` for the whole rebuild, so a second rebuild fails cleanly ("locked by another devlog-index update; the index is unchanged") instead of deleting the first one's files; test two overlapping rebuilds
+- [x] 16.2 `swapIn` falls back to deleting the live index and its sidecar files and renaming the rebuilt one into place when the live file exists but cannot be opened or read as a database, so `--rebuild` repairs a corrupt index as the error messages promise; test with a live `index.db` that is not a database
+- [x] 16.3 `swapIn` treats only `FileNotFound` from `access(live)` as "no index yet"; any other error fails the update without deleting anything; test that a non-`FileNotFound` access error leaves the live files in place
+- [x] 16.4 A query ranks and loads its passages inside one read transaction on its connection, so an update or rebuild that commits mid-query cannot change the ids between ranking and loading; test that a commit between rank and load does not change the results or produce an orphan notice; verify `make gates`
 
 ## 17. Review fixes: chunking and threads
 
