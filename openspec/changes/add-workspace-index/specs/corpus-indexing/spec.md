@@ -95,6 +95,15 @@ refuse to mix vectors and SHALL tell the user to rebuild.
 - **WHEN** the model cannot be loaded during `update`
 - **THEN** the update fails without changing the index
 
+### Requirement: Model pinned by content
+The embedding model SHALL be pinned to a fixed revision and a content hash. A downloaded model whose
+content hash differs SHALL NOT enter the cache.
+
+#### Scenario: Downloaded model has the wrong content hash
+- **WHEN** the downloaded model's SHA-256 is not the pinned one
+- **THEN** the download is discarded, nothing is cached, and the update fails naming both hashes without
+  changing the index
+
 ### Requirement: Index status
 `status` SHALL report the workspace name and root, each member with its passage count (or that it is
 missing), the number of files changed since the last update, the time of the last update, and whether

@@ -53,7 +53,10 @@ now is premature for two consumers.
 The model memlite already downloads (~99 MB), in the same family as the spike's. Passages are embedded
 as `search_document: <text>` and queries as `search_query: <text>`, as the spike did; the model is
 trained with these prefixes. Inputs longer than the model's context are truncated, with the title first
-so it always survives.
+so it always survives. The model is pinned by content: its URL names a fixed commit of the Hugging Face
+repository (not the moving `main`), and a download is accepted into the cache only if its SHA-256 matches
+the pinned one. The cached file is trusted afterwards; hashing ~99 MB on every query would break the
+latency budget. The pinned URL is the identity the index records (D3).
 *Alternatives:* a smaller model (bge-small) — untested here; would have to re-earn the spike's ranks.
 
 ### D3. Storage: one SQLite database, FTS5 + sqlite-vec (ADR-0002)

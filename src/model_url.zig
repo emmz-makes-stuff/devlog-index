@@ -13,10 +13,15 @@ const std = @import("std");
 
 const Allocator = std.mem.Allocator;
 
-/// The embedding model every index is built with (design D2). Recorded in
-/// the index; a different value here refuses until `update --rebuild`.
+/// The embedding model every index is built with (design D2), at a fixed
+/// commit of the repository rather than its moving `main`. Recorded in the
+/// index; a different value here refuses until `update --rebuild`.
 pub const pinned_url =
-    "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q5_K_M.gguf";
+    "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/0188c9bf409793f810680a5a431e7b899c46104c/nomic-embed-text-v1.5.Q5_K_M.gguf";
+
+/// SHA-256 of the file at `pinned_url` (its Git LFS object id). A download
+/// that hashes differently never enters the cache.
+pub const pinned_sha256 = "0c7930f6c4f6f29b7da5046e3a2c0832aa3f602db3de5760a95f0582dbd3d6e6";
 
 pub const Parsed = struct {
     owner: []const u8,
@@ -105,6 +110,18 @@ test "happy path: nomic-embed canonical URL" {
     try testing.expectEqualStrings("main", p.branch);
     try testing.expectEqualStrings("nomic-embed-text-v1.5.Q5_K_M.gguf", p.filename);
     try testing.expectEqualStrings(url, p.raw);
+}
+
+test "the pinned URL names a commit, not a branch, and caches where main did" {
+    const p = try parse(pinned_url);
+    try testing.expectEqual(@as(usize, 40), p.branch.len);
+    for (p.branch) |ch| try testing.expect(std.ascii.isHex(ch));
+    const was = try parse("https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q5_K_M.gguf");
+    const a = try cachePathZ(testing.allocator, "/h", p);
+    defer testing.allocator.free(a);
+    const b = try cachePathZ(testing.allocator, "/h", was);
+    defer testing.allocator.free(b);
+    try testing.expectEqualStrings(b, a);
 }
 
 test "query string is stripped from filename" {

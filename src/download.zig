@@ -21,6 +21,8 @@ pub const Error = error{
     HttpStatusNotOk,
     WriteFailed,
     ReplaceFailed,
+    /// The body's SHA-256 is not the pinned one.
+    DigestMismatch,
 };
 
 const MIB: u64 = 1024 * 1024;
@@ -131,7 +133,8 @@ fn stdLogEmit(_: ?*anyopaque, line: []const u8) void {
     std.log.info("{s}", .{line});
 }
 
-/// Download `url` and atomically materialize it at `dst_dir/dst_basename`.
+/// Download `url` and atomically materialize it at `dst_dir/dst_basename`,
+/// only if its SHA-256 is `sha256` (lowercase hex); otherwise nothing appears.
 /// Progress is logged line-oriented to stderr via `std.log`.
 pub fn download(
     gpa: Allocator,
@@ -139,6 +142,7 @@ pub fn download(
     url: []const u8,
     dst_dir: Io.Dir,
     dst_basename: []const u8,
+    sha256: []const u8,
 ) (Error || Allocator.Error)!void {
     std.log.info("devlog-index: downloading {s}", .{url});
 
@@ -192,17 +196,40 @@ pub fn download(
     var transfer_buf: [64]u8 = undefined;
     const body_reader = response.reader(&transfer_buf);
 
-    var progress_buf: [4096]u8 = undefined;
-    var progress = Progress.init(
-        &file_writer.interface,
-        &progress_buf,
-        dst_basename,
-        req.response_content_length,
-        stdLogEmit,
-        null,
-    );
+    var got: [64]u8 = undefined;
+    copyVerified(body_reader, &file_writer.interface, dst_basename, req.response_content_length, sha256, &got, stdLogEmit, null) catch |err| {
+        if (err == Error.DigestMismatch)
+            std.log.err("devlog-index: {s} has SHA-256 {s}, but {s} is pinned; the download was discarded", .{ dst_basename, &got, sha256 });
+        return err;
+    };
+    const bytes = file_writer.pos;
+    atomic.replace(io) catch |err| {
+        std.log.err("devlog-index: rename to {s}: {s}", .{ dst_basename, @errorName(err) });
+        return Error.ReplaceFailed;
+    };
+    std.log.info("devlog-index: downloaded {d} bytes -> {s}", .{ bytes, dst_basename });
+}
 
-    _ = body_reader.streamRemaining(&progress.writer) catch |err| switch (err) {
+/// Stream `src` into `dst` with progress lines, hashing as it goes, and
+/// fail with `DigestMismatch` unless the SHA-256 is `want_sha256` (lowercase
+/// hex); `got` receives the actual one. `dst` is flushed either way; the
+/// caller discards it on error.
+fn copyVerified(
+    src: *Io.Reader,
+    dst: *Io.Writer,
+    basename: []const u8,
+    total: ?u64,
+    want_sha256: []const u8,
+    got: *[64]u8,
+    emit_fn: EmitFn,
+    emit_ctx: ?*anyopaque,
+) Error!void {
+    var hash_buf: [4096]u8 = undefined;
+    var hashed: Io.Writer.Hashed(std.crypto.hash.sha2.Sha256) = .initHasher(dst, .init(.{}), &hash_buf);
+    var progress_buf: [4096]u8 = undefined;
+    var progress = Progress.init(&hashed.writer, &progress_buf, basename, total, emit_fn, emit_ctx);
+
+    _ = src.streamRemaining(&progress.writer) catch |err| switch (err) {
         error.ReadFailed => {
             std.log.err("devlog-index: body read failed", .{});
             return Error.HttpRequestFailed;
@@ -212,21 +239,21 @@ pub fn download(
             return Error.WriteFailed;
         },
     };
-
     progress.writer.flush() catch return Error.WriteFailed;
-    file_writer.interface.flush() catch return Error.WriteFailed;
-    const bytes = file_writer.pos;
-    atomic.replace(io) catch |err| {
-        std.log.err("devlog-index: rename to {s}: {s}", .{ dst_basename, @errorName(err) });
-        return Error.ReplaceFailed;
-    };
-    std.log.info("devlog-index: downloaded {d} bytes -> {s}", .{ bytes, dst_basename });
+    hashed.writer.flush() catch return Error.WriteFailed;
+    dst.flush() catch return Error.WriteFailed;
+
+    var digest: [32]u8 = undefined;
+    hashed.hasher.final(&digest);
+    got.* = std.fmt.bytesToHex(digest, .lower);
+    if (!std.mem.eql(u8, got, want_sha256)) return Error.DigestMismatch;
 }
 
 /// Make sure the model file is at `cache_path`, downloading it from `url` on
-/// first need. Returns true when it downloaded. Only the model comes in over
-/// the network; nothing goes out but the request.
-pub fn ensureCached(gpa: Allocator, io: Io, cache_path: []const u8, url: []const u8) !bool {
+/// first need, verified against `sha256`. Returns true when it downloaded.
+/// An already-cached file is trusted (hashing it would cost every query).
+/// Only the model comes in over the network; nothing goes out but the request.
+pub fn ensureCached(gpa: Allocator, io: Io, cache_path: []const u8, url: []const u8, sha256: []const u8) !bool {
     const cwd = Io.Dir.cwd();
     if (cwd.access(io, cache_path, .{})) |_| {
         return false;
@@ -236,7 +263,7 @@ pub fn ensureCached(gpa: Allocator, io: Io, cache_path: []const u8, url: []const
     try cwd.createDirPath(io, cache_dir);
     var dir = try cwd.openDir(io, cache_dir, .{});
     defer dir.close(io);
-    try download(gpa, io, url, dir, std.fs.path.basename(cache_path));
+    try download(gpa, io, url, dir, std.fs.path.basename(cache_path), sha256);
     return true;
 }
 
@@ -340,4 +367,33 @@ test "Progress: unknown total emits one line per 5 MiB" {
         try testing.expect(std.mem.endsWith(u8, line, " MiB"));
         try testing.expect(std.mem.indexOf(u8, line, "%") == null);
     }
+}
+
+test "copyVerified passes a body with the pinned SHA-256 through whole" {
+    var cap = Capture.init(testing.allocator);
+    defer cap.deinit();
+    const body = "model bytes";
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(body, &digest, .{});
+    const want = std.fmt.bytesToHex(digest, .lower);
+
+    var src: Io.Reader = .fixed(body);
+    var out_buf: [64]u8 = undefined;
+    var dst: Io.Writer = .fixed(&out_buf);
+    var got: [64]u8 = undefined;
+    try copyVerified(&src, &dst, "m.gguf", body.len, &want, &got, Capture.callback, &cap);
+    try testing.expectEqualStrings(body, dst.buffered());
+}
+
+test "copyVerified rejects a body with another SHA-256" {
+    var cap = Capture.init(testing.allocator);
+    defer cap.deinit();
+    var src: Io.Reader = .fixed("tampered bytes");
+    var out_buf: [64]u8 = undefined;
+    var dst: Io.Writer = .fixed(&out_buf);
+    var got: [64]u8 = undefined;
+    try testing.expectError(Error.DigestMismatch, copyVerified(&src, &dst, "m.gguf", null, "0" ** 64, &got, Capture.callback, &cap));
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("tampered bytes", &digest, .{});
+    try testing.expectEqualStrings(&std.fmt.bytesToHex(digest, .lower), &got);
 }

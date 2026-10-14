@@ -93,8 +93,10 @@ pub fn indexPath(arena: Allocator, ws: workspace.Workspace) Allocator.Error![:0]
 pub fn run(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, opts: Options, diag: *Diag) Error!Report {
     return runInner(arena, gpa, io, ws, opts, diag) catch |err| {
         if (err == error.OutOfMemory) return error.OutOfMemory;
-        if (diag.message.len == 0)
-            diag.message = try std.fmt.allocPrint(arena, "update failed ({s}); the index is unchanged", .{@errorName(err)});
+        if (diag.message.len == 0) diag.message = if (err == error.SqliteBusy)
+            try std.fmt.allocPrint(arena, "{s} is locked by another devlog-index update; the index is unchanged; try again when it finishes", .{try indexPath(arena, ws)})
+        else
+            try std.fmt.allocPrint(arena, "update failed ({s}); the index is unchanged", .{@errorName(err)});
         return switch (err) {
             error.ModelMismatch, error.SchemaMismatch, error.EmbeddingUnavailable, error.UpdateFailed => |e| e,
             else => error.UpdateFailed,
@@ -116,17 +118,21 @@ fn runInner(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
     deleteDbFiles(arena, io, tmp_path);
     defer deleteDbFiles(arena, io, tmp_path);
     const report = try updateAt(arena, gpa, io, ws, opts, tmp_path, diag);
-    try swapIn(io, tmp_path, final_path);
+    try swapIn(arena, io, tmp_path, final_path);
     return report;
 }
 
 /// Make the rebuilt database at `built` the index at `live`. With no index
-/// yet it is renamed into place. Otherwise its pages are copied into the
-/// live file through SQLite: renaming over a WAL database that a reader has
-/// open would pair the new file with the old `-wal`/`-shm` files.
-fn swapIn(io: Io, built: [:0]const u8, live: [:0]const u8) !void {
+/// yet it is renamed into place, after deleting any journal, WAL or
+/// shared-memory files left beside it. Otherwise its pages are copied into
+/// the live file through SQLite: renaming over a WAL database that a reader
+/// has open would pair the new file with the old `-wal`/`-shm` files.
+fn swapIn(arena: Allocator, io: Io, built: [:0]const u8, live: [:0]const u8) !void {
     const cwd = Io.Dir.cwd();
-    cwd.access(io, live, .{}) catch return cwd.rename(built, cwd, live, io);
+    cwd.access(io, live, .{}) catch {
+        deleteDbFiles(arena, io, live);
+        return cwd.rename(built, cwd, live, io);
+    };
     var src = try dbm.Db.open(built, .read_only);
     defer src.close();
     var dest = try dbm.Db.open(live, .read_write_create);
@@ -166,6 +172,11 @@ fn updateAt(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
     };
     defer ix.close();
     const db = ix.db;
+
+    // The write lock comes before reading what the index holds, so another
+    // update cannot commit between that read and this one's writes.
+    try db.exec("BEGIN IMMEDIATE");
+    errdefer db.exec("ROLLBACK") catch {};
 
     // What the index holds now.
     var existing: std.StringHashMapUnmanaged(Existing) = .empty;
@@ -208,9 +219,6 @@ fn updateAt(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
             out.flush() catch {};
         };
     }
-
-    try db.exec("BEGIN IMMEDIATE");
-    errdefer db.exec("ROLLBACK") catch {};
 
     const now_s: i64 = @intCast(@divFloor(Io.Timestamp.now(io, .real).nanoseconds, std.time.ns_per_s));
     var stale_passages: std.ArrayList(i64) = .empty;
@@ -581,7 +589,7 @@ pub const ModelProvider = struct {
         // Loaded once: query and eval ask for the embedder on every query.
         if (mp.embedder) |e| return .{ .ptr = mp, .dim = e.dim, .embedFn = embedText };
         if (mp.download_url) |url|
-            _ = try download.ensureCached(mp.gpa, mp.io, mp.model_path, url)
+            _ = try download.ensureCached(mp.gpa, mp.io, mp.model_path, url, model_url.pinned_sha256)
         else
             Io.Dir.cwd().access(mp.io, mp.model_path, .{}) catch return error.ModelNotCached;
         model_mod.initBackend();
@@ -668,6 +676,34 @@ test "update: one new note in one member, run from another member" {
     try testing.expectEqual(@as(usize, 1), r.passages_embedded);
     try testing.expectEqual(before.passages_total + 1, r.passages_total);
     try testing.expectEqual(@as(i64, 1), try f.count("SELECT count(*) FROM passages p JOIN files f ON f.id = p.file_id WHERE f.rel LIKE '%token-audience%'"));
+}
+
+test "update: another writer's lock fails the update cleanly, naming the lock" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    var stub: Stub = .{};
+    const before = try f.update("", &stub, false);
+    try f.write("alpha/openspec/changes/add-cache/devlog/20260402-0900-decision-token-audience.md", new_note);
+
+    var other = try dbm.Db.open(try std.fs.path.joinZ(f.arena(), &.{ f.root, ".devlog-index", "index.db" }), .read_write_create);
+    defer other.close();
+    try other.exec("BEGIN IMMEDIATE");
+    const saved_timeout = dbm.busy_timeout_ms;
+    dbm.busy_timeout_ms = 50;
+    defer dbm.busy_timeout_ms = saved_timeout;
+
+    var wdiag: workspace.Diag = .{};
+    const ws = try workspace.resolve(f.arena(), testing.io, f.root, &wdiag);
+    var diag: Diag = .{};
+    const embeds = stub.embeds;
+    try testing.expectError(error.UpdateFailed, run(f.arena(), testing.allocator, testing.io, ws, .{ .provider = stub.provider(), .model_url = "test://stub" }, &diag));
+    try testing.expect(std.mem.indexOf(u8, diag.message, "locked by another devlog-index update") != null);
+    try testing.expectEqual(embeds, stub.embeds);
+
+    try other.exec("ROLLBACK");
+    try testing.expectEqual(@as(i64, @intCast(before.passages_total)), try f.count("SELECT count(*) FROM passages"));
+    const r = try f.update("", &stub, false);
+    try testing.expectEqual(@as(usize, 1), r.added);
 }
 
 test "update: a changed file is re-chunked, reusing vectors of unchanged passages" {
@@ -769,6 +805,22 @@ test "update: interrupted mid-embedding leaves the previous index usable" {
 
     const r = try f.update("", &stub, false);
     try testing.expectEqual(@as(usize, 2), r.added);
+}
+
+test "swapIn with no live index deletes stale sidecar files before the rename" {
+    var f = try Fixture.init();
+    defer f.deinit();
+    try f.write(".devlog-index/index.db.rebuild", "built");
+    for ([_][]const u8{ "-wal", "-shm", "-journal" }) |suffix|
+        try f.write(try std.fmt.allocPrint(f.arena(), ".devlog-index/index.db{s}", .{suffix}), "stale");
+
+    const live = try std.fs.path.joinZ(f.arena(), &.{ f.root, ".devlog-index", "index.db" });
+    try swapIn(f.arena(), testing.io, try std.fmt.allocPrintSentinel(f.arena(), "{s}.rebuild", .{live}, 0), live);
+
+    var buf: [16]u8 = undefined;
+    try testing.expectEqualStrings("built", try f.tmp.dir.readFile(testing.io, ".devlog-index/index.db", &buf));
+    for ([_][]const u8{ "-wal", "-shm", "-journal" }) |suffix|
+        try testing.expectError(error.FileNotFound, f.tmp.dir.access(testing.io, try std.fmt.allocPrint(f.arena(), ".devlog-index/index.db{s}", .{suffix}), .{}));
 }
 
 test "update: model mismatch is refused; --rebuild replaces the index" {

@@ -16,6 +16,10 @@ pub const Error = error{ SqliteOpenFailed, SqliteFailed, SqliteBusy };
 
 pub const Mode = enum { read_only, read_write_create };
 
+/// How long a connection waits for another's lock before `SqliteBusy`.
+/// Tests that hold a lock on purpose shorten it.
+pub var busy_timeout_ms: c_int = 5000;
+
 pub const Db = struct {
     handle: *c.sqlite3,
 
@@ -30,7 +34,7 @@ pub const Db = struct {
             if (h) |opened| _ = c.sqlite3_close_v2(opened);
             return error.SqliteOpenFailed;
         }
-        _ = c.sqlite3_busy_timeout(h, 5000);
+        _ = c.sqlite3_busy_timeout(h, busy_timeout_ms);
         return .{ .handle = h.? };
     }
 

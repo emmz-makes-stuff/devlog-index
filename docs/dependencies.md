@@ -15,7 +15,8 @@ Notes:
 - The first `zig build` fetches the `daemonicai/llama.cpp.zig` fork from GitHub (pinned in
   `build.zig.zon`), so it needs network access.
 - The embedding model (`nomic-embed-text-v1.5` Q5_K_M GGUF, ~99 MB) is not a tool dependency: the binary
-  downloads it on first `update`, and `status` reports whether it is present.
+  downloads it on first `update`, and `status` reports whether it is present. It is pinned to a Hugging
+  Face commit and a SHA-256 in `src/model_url.zig`; a download with another hash is discarded.
 - Bare `zig build` fails on a machine whose selected SDK is 27 (`use of undeclared identifier
   'INFINITY'` in libc++). Build through `make`, which sets `ZIG_LIBC`; drop the SDK 26 row once a Zig
   release builds against SDK 27.

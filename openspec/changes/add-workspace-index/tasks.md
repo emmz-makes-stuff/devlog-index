@@ -68,3 +68,17 @@
 - [x] 12.1 Add CLI integration tests (D10) that run the built binary against a temp copy of the fixture: `query --json` writes only JSON lines to stdout with notices on stderr; exit codes are 0 on success, 1 on an error and on a failed `eval`, 2 on a usage error; verify they run in `zig build test`
 - [x] 12.2 Remove the `bench-cold` spike (`src/bench.zig` and its `main.zig` branch); its measurements stay in the §2 and §7 devlog notes
 - [x] 12.3 Tidy drift in `main.zig` and below: one usage-exit path for every command; `query` rejects unknown `--` flags instead of treating them as text; drop the unused `update.Report.missing_members`; fix the stale `Embedder.embed` doc comment; close SQLite connections with `sqlite3_close_v2`; verify `make gates`
+
+## 13. Review fixes: index integrity and model pinning
+
+- [x] 13.1 `update` reads the `files` table and decides inserts, updates and deletes only after `BEGIN IMMEDIATE`, so a concurrent `update` can't make it work from a stale snapshot; a second writer waits out the busy timeout and fails with a message saying the index is locked by another update, leaving it unchanged; test by holding the write lock from another connection
+- [x] 13.2 `query` skips a ranked passage whose file row is missing instead of failing the whole query, and adds a notice naming the rebuild command; test with a hand-made orphan passage
+- [x] 13.3 `swapIn` deletes any leftover `-wal`/`-shm`/`-journal` next to the live path before renaming a rebuilt index into place where there is no live index; test with stale sidecar files present
+- [x] 13.4 Pin the model by content: the pinned URL names a Hugging Face commit revision instead of `main`, and the download verifies a pinned SHA-256 before the file enters the cache (a mismatch is an error naming both hashes and leaves no cached file); update D2, `docs/dependencies.md` if affected, and the corpus-indexing spec (a new "Model pinned by content" requirement with a hash-mismatch scenario); hermetic test of the hash check; verify `make gates`
+
+## 14. Review fixes: indexing and query edge cases
+
+- [ ] 14.1 `update` skips reading and hashing a file whose size and mtime match its `files` row, as freshness does; test that an unchanged update reads no file bodies and still detects a same-size edit with a new mtime
+- [ ] 14.2 Discovery follows symlinked files and directories under a member's `openspec/`, with a guard against loops (a directory target already visited is skipped) and a warning for each broken link; test with a symlinked note, a symlinked spec directory, a loop and a broken link
+- [ ] 14.3 The FTS query builder splits terms on Unicode punctuation (dashes, curly quotes, ellipsis and the like), not only ASCII; test `retry—backoff` and `don’t`
+- [ ] 14.4 The chunker treats everything inside an HTML comment as comment, fences included, so a fenced block inside `<!-- … -->` neither leaks into passages nor keeps the comment open; test both; verify `make gates`

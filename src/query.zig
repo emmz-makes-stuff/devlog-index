@@ -107,7 +107,9 @@ fn runInner(arena: Allocator, gpa: Allocator, io: Io, ws: workspace.Workspace, o
     if (try staleness(arena, io, ws, db)) |n| try notices.append(arena, n);
     const r = try rank(arena, gpa, db, opts, diag);
     if (r.semantic_skipped) |n| try notices.append(arena, n);
-    const results = try load(arena, db, try merge(arena, r.lexical, r.semantic));
+    const loaded = try load(arena, db, try merge(arena, r.lexical, r.semantic));
+    if (loaded.orphans > 0) try notices.append(arena, try std.fmt.allocPrint(arena, "{d} ranked passages belong to no indexed file and were skipped; rebuild the index with: {s}", .{ loaded.orphans, index.rebuild_command }));
+    const results = loaded.results;
     for (results) |*res| res.notices = notices.items;
     return .{ .results = results, .notices = notices.items };
 }
@@ -275,7 +277,9 @@ pub fn merge(arena: Allocator, lex: []const i64, sem: []const i64) Allocator.Err
     return out.items;
 }
 
-fn load(arena: Allocator, db: dbm.Db, hits: []const Hit) ![]Result {
+/// The ranked passages with their labels and threads. A passage whose file
+/// row is gone (an index damaged outside `update`) is skipped and counted.
+fn load(arena: Allocator, db: dbm.Db, hits: []const Hit) !Loaded {
     var s = try db.prepare(
         \\SELECT p.text, f.path, f.rel, f.member, f.change, f.capability, f.archived, f.kind, f.note_time
         \\FROM passages p JOIN files f ON f.id = p.file_id WHERE p.id = ?
@@ -287,15 +291,19 @@ fn load(arena: Allocator, db: dbm.Db, hits: []const Hit) ![]Result {
         \\ORDER BY f.note_time, f.path, p.ordinal
     );
     defer later.finalize();
-    const out = try arena.alloc(Result, hits.len);
-    for (hits, out) |h, *r| {
+    var out: std.ArrayList(Result) = .empty;
+    var orphans: usize = 0;
+    for (hits) |h| {
         s.reset();
         try s.bindInt(1, h.id);
-        if (!try s.step()) return error.QueryFailed; // an id from the index's own tables
+        if (!try s.step()) {
+            orphans += 1;
+            continue;
+        }
         var methods: std.ArrayList([]const u8) = .empty;
         if (h.lexical != null) try methods.append(arena, "lexical");
         if (h.semantic != null) try methods.append(arena, "semantic");
-        r.* = .{
+        var r: Result = .{
             .text = try arena.dupe(u8, s.text(0)),
             .path = try arena.dupe(u8, s.text(1)),
             .rel = try arena.dupe(u8, s.text(2)),
@@ -307,10 +315,13 @@ fn load(arena: Allocator, db: dbm.Db, hits: []const Hit) ![]Result {
             .note_time = if (s.isNull(8)) null else try arena.dupe(u8, s.text(8)),
             .methods = methods.items,
         };
-        r.thread = try threadOf(arena, later, r.*);
+        r.thread = try threadOf(arena, later, r);
+        try out.append(arena, r);
     }
-    return out;
+    return .{ .results = out.items, .orphans = orphans };
 }
+
+const Loaded = struct { results: []Result, orphans: usize };
 
 /// The later notes in `r`'s change that refer back to it, in time order,
 /// using `later` (the thread query in `load`).
@@ -585,7 +596,7 @@ test "merge: both first, then alternating by own rank, no duplicates" {
 test "load labels results; text output shows every label" {
     var h = try Hand.init();
     defer h.deinit();
-    const rs = try load(h.arena(), h.db, try merge(h.arena(), &.{2}, &.{ 2, 1 }));
+    const rs = (try load(h.arena(), h.db, try merge(h.arena(), &.{2}, &.{ 2, 1 }))).results;
     try testing.expectEqual(@as(usize, 2), rs.len);
     try testing.expectEqualStrings("api", rs[0].member);
     try testing.expectEqualStrings("add-x", rs[0].change.?);
@@ -699,6 +710,22 @@ test "query: model unavailable gives lexical results and says semantic search wa
     try testing.expect(std.mem.indexOf(u8, other.notices[0], "built with model test://stub") != null);
     try testing.expect(std.mem.indexOf(u8, other.notices[0], "uses test://other") != null);
     try expectJsonNotices(&f, other);
+}
+
+test "query: a ranked passage with no file row is skipped with a notice" {
+    var f = try testutil.Fixture.init();
+    defer f.deinit();
+    var stub: testutil.Stub = .{};
+    _ = try f.update("", &stub, false);
+    try f.exec("DELETE FROM files WHERE rel LIKE '%retry-policy%'");
+    try testing.expect(try f.count("SELECT count(*) FROM passages WHERE file_id NOT IN (SELECT id FROM files)") > 0);
+
+    const o = try queryIn(&f, "beta", .{ .text = "thundering-herd argument", .provider = stub.provider(), .model_url = "test://stub" });
+    for (o.results) |r| try testing.expect(std.mem.indexOf(u8, r.path, "retry-policy") == null);
+    // The deleted row also makes its note count as stale; the orphan notice is the last.
+    const last = o.notices[o.notices.len - 1];
+    try testing.expect(std.mem.indexOf(u8, last, "belong to no indexed file") != null);
+    try testing.expect(std.mem.indexOf(u8, last, index.rebuild_command) != null);
 }
 
 test "query: a stale index is used with a notice counting the unindexed files" {
