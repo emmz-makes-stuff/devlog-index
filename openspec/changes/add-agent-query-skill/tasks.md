@@ -8,12 +8,12 @@
 
 ## 2. The skill
 
-- [ ] 2.1 Write the `description` frontmatter so it names history/decision questions across OpenSpec notes, changes and specs, and not code-only questions; verify against the "Skill triggers on history questions" scenarios
-- [ ] 2.2 Write the binary and freshness steps: `command -v devlog-index` (stop and tell the user to run `./install.sh` if absent), `status --json` once per task, `update` when the index is missing or files changed, with the first-run model download noted; verify against the "Freshness guidance" scenarios
-- [ ] 2.3 Write the querying section: `query --json "<text>"`, phrasing, `--k N`, stdout-only JSON, the result labels, which kinds are decisions, and reading threads before relying on a result; verify against the "Querying guidance" scenarios
-- [ ] 2.4 Write the failure section: keyword-only notices, missing index, no workspace (no `init`), no results, exit codes 0/1/2; verify against the "Failure handling guidance" scenarios
-- [ ] 2.5 Run the CLI against a real workspace as the skill directs (`status --json`, `query --json`, `--k`) and verify each command and flag in the skill works as written, noting the output in the devlog note
-- [ ] 2.6 Self-review the skill against `README.md` and the `workspace-query` spec and verify no command, flag, notice or exit code is absent from or contradicts them
+- [x] 2.1 Write the `description` frontmatter so it names history/decision questions across OpenSpec notes, changes and specs, and not code-only questions; verify against the "Skill triggers on history questions" scenarios
+- [x] 2.2 Write the binary and freshness steps: `command -v devlog-index` (stop and tell the user to run `./install.sh` if absent), `status --json` once per task, `update` when the index is missing or files changed, with the first-run model download noted; verify against the "Freshness guidance" scenarios
+- [x] 2.3 Write the querying section: `query --json "<text>"`, phrasing, `--k N`, stdout-only JSON, the result labels, which kinds are decisions, and reading threads before relying on a result; verify against the "Querying guidance" scenarios
+- [x] 2.4 Write the failure section: keyword-only notices, missing index, no workspace (no `init`), no results, exit codes 0/1/2; verify against the "Failure handling guidance" scenarios
+- [x] 2.5 Run the CLI against a real workspace as the skill directs (`status --json`, `query --json`, `--k`) and verify each command and flag in the skill works as written, noting the output in the devlog note
+- [x] 2.6 Self-review the skill against `README.md` and the `workspace-query` spec and verify no command, flag, notice or exit code is absent from or contradicts them
 
 ## 3. Documentation
 
