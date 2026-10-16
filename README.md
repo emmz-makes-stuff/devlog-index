@@ -126,6 +126,24 @@ fields are rejected.
 0 on success; 1 on an error (the message names what to do, e.g. `run: devlog-index update`) or a failed
 `eval`; 2 on a usage error.
 
+## Agent skill
+
+This repo is also a Claude Code plugin marketplace. Its one plugin carries a skill, `query-devlog-index`,
+that tells an agent how to check the index, query it with `--json`, read results and threads, and handle
+failures. In Claude Code:
+
+```
+/plugin marketplace add emmz-makes-stuff/devlog-index
+/plugin install devlog-index@devlog-index
+```
+
+The plugin does not install the binary: run `./install.sh` first (see Install). Without it on `PATH`, the
+skill tells the agent to ask you to install it. The agent never runs `init`; declaring a workspace is yours.
+
+The skill restates this README's commands, flags, notices and exit codes
+(`plugins/devlog-index/skills/query-devlog-index/SKILL.md`). When one of them changes, update the skill in the
+same change, then run `claude plugin validate .`.
+
 ## Building
 
 Build through `make` (`make build`, `make test`, `make gates`), not bare `zig build`: on macOS it points
