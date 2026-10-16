@@ -3,8 +3,6 @@ name: release
 on:
   push:
     tags: ["v*"]
-    # TEMP (add-release-workflow §4): dry-run from the change branch; remove before the section commit.
-    branches: [change/add-release-workflow]
   # Builds and uploads the archives as workflow artifacts; never publishes.
   workflow_dispatch:
 
