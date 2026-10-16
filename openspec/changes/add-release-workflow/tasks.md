@@ -7,8 +7,8 @@
 
 ## 2. Packaging script
 
-- [ ] 2.1 Add `scripts/package-release.sh <version> <target>` producing `devlog-index-<version>-<target>.tar.gz` containing the binary and `LICENSE`, and verify by running it on a local build and listing the archive contents
-- [ ] 2.2 Add checksum generation for a directory of archives (`SHA256SUMS`) and verify with `shasum -a 256 -c SHA256SUMS`
+- [x] 2.1 Add `scripts/package-release.sh <version> <target>` producing `devlog-index-<version>-<target>.tar.gz` containing the binary and `LICENSE`, and verify by running it on a local build and listing the archive contents
+- [x] 2.2 Add checksum generation for a directory of archives (`SHA256SUMS`) and verify with `shasum -a 256 -c SHA256SUMS`
 
 ## 3. CI workflow
 
