@@ -1,0 +1,16 @@
+{
+  "name": "devlog-index",
+  "owner": {
+    "name": "Emmz"
+  },
+  "metadata": {
+    "description": "Agent skills for devlog-index, a local search over OpenSpec devlog notes, changes and specs."
+  },
+  "plugins": [
+    {
+      "name": "devlog-index",
+      "source": "./plugins/devlog-index",
+      "description": "Teaches agents to query a local index of OpenSpec devlog notes, changes and specs with the devlog-index CLI."
+    }
+  ]
+}

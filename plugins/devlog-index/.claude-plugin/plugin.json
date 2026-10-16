@@ -1,0 +1,8 @@
+{
+  "name": "devlog-index",
+  "description": "Teaches agents to query a local index of OpenSpec devlog notes, changes and specs with the devlog-index CLI.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Emmz"
+  }
+}
