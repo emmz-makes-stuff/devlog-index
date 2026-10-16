@@ -12,8 +12,8 @@
 
 ## 3. CI workflow
 
-- [ ] 3.1 Add `.github/workflows/ci.yml` (push and pull_request; ubuntu; pinned Zig 0.16.0; `zig fmt --check src build.zig`; `zig build test --summary all`) and verify with a pushed branch that it goes green
-- [ ] 3.2 Verify it goes red on a deliberately unformatted file on a throwaway branch (record the run URL in the devlog note)
+- [x] 3.1 Add `.github/workflows/ci.yml` (push and pull_request; ubuntu; pinned Zig 0.16.0; `zig fmt --check src build.zig`; `zig build test --summary all`) and verify with a pushed branch that it goes green
+- [x] 3.2 Verify it goes red on a deliberately unformatted file on a throwaway branch (record the run URL in the devlog note)
 
 ## 4. Release workflow
 
