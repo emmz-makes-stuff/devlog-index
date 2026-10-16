@@ -17,8 +17,8 @@
 
 ## 3. Documentation
 
-- [ ] 3.1 Add an "Agent skill" section to `README.md`: `/plugin marketplace add`, `/plugin install`, that the binary must already be installed, and a note to update the skill when the CLI's flags or notices change; verify the commands are copy-pasteable and match the manifests' names
-- [ ] 3.2 Run `claude plugin validate .` again and `make gates`; verify `VALIDATE_EXIT:0`, `BUILD_EXIT:0`, `TEST_EXIT:0`, `FORMAT_EXIT:0` and `GATES_EXIT:0` are all seen
+- [x] 3.1 Add an "Agent skill" section to `README.md`: `/plugin marketplace add`, `/plugin install`, that the binary must already be installed, and a note to update the skill when the CLI's flags or notices change; verify the commands are copy-pasteable and match the manifests' names
+- [x] 3.2 Run `claude plugin validate .` again and `make gates`; verify `VALIDATE_EXIT:0`, `BUILD_EXIT:0`, `TEST_EXIT:0`, `FORMAT_EXIT:0` and `GATES_EXIT:0` are all seen
 
 ## Workflow follow-up
 
