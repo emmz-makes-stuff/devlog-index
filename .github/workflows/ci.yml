@@ -2,6 +2,9 @@ name: ci
 
 on:
   push:
+    # Branches are covered by their pull request; a plain push would run CI twice.
+    branches: [main]
+    tags: ["v*"]
   pull_request:
 
 permissions:

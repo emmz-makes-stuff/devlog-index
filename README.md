@@ -33,7 +33,8 @@ tar -xzf "devlog-index-$tag-$target.tar.gz"
 mkdir -p ~/.local/bin && install -m 0755 devlog-index ~/.local/bin/
 ```
 
-The checksum line should end in `: OK`. Make sure `~/.local/bin` is on your `PATH`.
+Run these in the directory you downloaded into. The checksum line should end in `: OK`; if you instead see
+"no properly formatted … checksum lines found", the archive isn't there, so don't continue. Make sure `~/.local/bin` is on your `PATH`.
 
 The binaries are cross-compiled on Linux and aren't signed or notarized. If macOS refuses to open one you
 downloaded in a browser, clear the quarantine flag: `xattr -d com.apple.quarantine ~/.local/bin/devlog-index`.

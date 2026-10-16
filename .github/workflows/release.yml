@@ -10,6 +10,29 @@ permissions:
   contents: read
 
 jobs:
+  # Same checks as ci.yml: a tag may be pushed on a commit CI never saw.
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Zig 0.16.0
+        run: |
+          curl -sSfL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o zig.tar.xz
+          echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  zig.tar.xz" | sha256sum -c
+          tar xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Format
+        run: zig fmt --check src build.zig
+
+      - name: Test
+        run: zig build test --summary all
+
+      - name: Release scripts
+        run: scripts/test-release-scripts.sh
+
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -28,8 +51,8 @@ jobs:
           path: |
             ~/.cache/zig
             .zig-cache
+          # Exact key only: a release must not build on a cache from another configuration.
           key: zig-0.16.0-${{ hashFiles('build.zig', 'build.zig.zon') }}
-          restore-keys: zig-0.16.0-
 
       - name: Build and package
         run: |
@@ -62,9 +85,9 @@ jobs:
           if-no-files-found: error
 
   publish:
-    # Only a tag push publishes; a manual dispatch stops after `build`.
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    # Only a tag push publishes; a manual dispatch stops after `build`, even one started on a tag ref.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [check, build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -79,8 +102,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -l dist
-          flags=()
-          [[ "$GITHUB_REF_NAME" == *-* ]] && flags+=(--prerelease)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then prerelease=(--prerelease); else prerelease=(); fi
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "$GITHUB_REF_NAME" --generate-notes "${flags[@]}"
+            --title "$GITHUB_REF_NAME" --generate-notes ${prerelease[@]+"${prerelease[@]}"}

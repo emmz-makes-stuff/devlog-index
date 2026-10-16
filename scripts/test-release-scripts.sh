@@ -33,10 +33,11 @@ for t in $targets; do
     listing=$(tar -tzf "$a" 2>/dev/null | sed 's|^\./||' | LC_ALL=C sort | tr '\n' ' ')
     check "$t archive holds exactly devlog-index and LICENSE" test "$listing" = "LICENSE devlog-index "
     mkdir -p "$work/x-$t" && tar -xzf "$a" -C "$work/x-$t"
-    if [ "$(id -u)" -ne 0 ]; then
-        check_not "$t archive doesn't record the builder's account" \
-            sh -c "tar -tzvf '$a' | grep -qw '$(id -un)'"
-    fi
+    # Positive check: every entry is owned by root (bsdtar prints "root  wheel"/"0 0", GNU tar "root/root").
+    verbose=$(tar -tzvf "$a" 2>/dev/null)
+    check "$t archive lists two entries" test "$(printf '%s\n' "$verbose" | grep -c .)" = 2
+    check "$t archive entries are owned by root" \
+        test "$(printf '%s\n' "$verbose" | grep -Ec '^[-rwx]{10} +(0|root)[ /]+(0|root|wheel)[ ]')" = 2
     check "$t binary is executable" test -x "$work/x-$t/devlog-index"
     check "$t LICENSE matches the repo's" cmp -s "$work/x-$t/LICENSE" "$here/../LICENSE"
 done
