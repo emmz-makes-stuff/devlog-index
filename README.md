@@ -6,6 +6,41 @@ came from. Nothing leaves the machine.
 
 ## Install
 
+### Download a release
+
+Each [release](https://github.com/emmz-makes-stuff/devlog-index/releases) has a binary for macOS on Apple
+silicon, and for Linux on x86-64 and arm64. Windows isn't supported yet.
+
+| Platform | `target` |
+|---|---|
+| macOS, Apple silicon | `macos-arm64` |
+| Linux, x86-64 | `linux-x64` |
+| Linux, arm64 | `linux-arm64` |
+
+```sh
+tag=v0.1.0             # the release you want
+target=macos-arm64     # from the table above
+base="https://github.com/emmz-makes-stuff/devlog-index/releases/download/$tag"
+curl -fsSLO "$base/devlog-index-$tag-$target.tar.gz"
+curl -fsSLO "$base/SHA256SUMS"
+```
+
+Check the download against `SHA256SUMS` (use `sha256sum -c -` on Linux), then install it:
+
+```sh
+grep -F "devlog-index-$tag-$target.tar.gz" SHA256SUMS | shasum -a 256 -c -
+tar -xzf "devlog-index-$tag-$target.tar.gz"
+mkdir -p ~/.local/bin && install -m 0755 devlog-index ~/.local/bin/
+```
+
+Run these in the directory you downloaded into. The checksum line should end in `: OK`; if you instead see
+"no properly formatted … checksum lines found", the archive isn't there, so don't continue. Make sure `~/.local/bin` is on your `PATH`.
+
+The binaries are cross-compiled on Linux and aren't signed or notarized. If macOS refuses to open one you
+downloaded in a browser, clear the quarantine flag: `xattr -d com.apple.quarantine ~/.local/bin/devlog-index`.
+
+### Build from source
+
 ```sh
 ./install.sh
 ```
@@ -137,7 +172,7 @@ failures. In Claude Code:
 /plugin install devlog-index@devlog-index
 ```
 
-The plugin does not install the binary: run `./install.sh` first (see Install). Without it on `PATH`, the
+The plugin does not install the binary: install it first, from a release or from source (see Install). Without it on `PATH`, the
 skill tells the agent to ask you to install it. The agent never runs `init`; declaring a workspace is yours.
 
 The skill restates this README's commands, flags, notices and exit codes

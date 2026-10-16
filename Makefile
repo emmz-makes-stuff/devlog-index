@@ -18,7 +18,7 @@ endif
 
 CHANGES := $(notdir $(patsubst %/,%,$(filter-out %/archive/,$(wildcard openspec/changes/*/))))
 
-.PHONY: build release test format validate changes gates deps libc
+.PHONY: build release test test-scripts format validate changes gates deps libc
 
 # Writes the SDK 26 libc file (see SDK26 above); a no-op without that SDK, which
 # `make deps` reports.
@@ -50,11 +50,15 @@ validate:
 	fi; \
 	echo "VALIDATE_EXIT:$$fail"; exit $$fail
 
+# The release packaging scripts (scripts/), against a fake binary.
+test-scripts:
+	@scripts/test-release-scripts.sh; code=$$?; echo "SCRIPTS_EXIT:$$code"; exit $$code
+
 changes:
 	@echo "$(CHANGES)"
 
 gates:
-	@$(MAKE) --no-print-directory -k build test format validate; code=$$?; \
+	@$(MAKE) --no-print-directory -k build test test-scripts format validate; code=$$?; \
 	echo "GATES_EXIT:$$code"; exit $$code
 
 # Every tool and login in docs/dependencies.md — keep the two in step. Not part of
