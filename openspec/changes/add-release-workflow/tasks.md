@@ -25,3 +25,10 @@
 
 - [x] 5.1 Add a "Download a release" section to `README.md` (asset names, checksum verification, macOS quarantine note, where to put the binary, and that Windows isn't yet supported) and verify the documented commands work against the 4.2 release
 - [x] 5.2 Update `docs/dependencies.md` if the workflows rely on a tool it doesn't list, and verify `make deps` still passes
+
+## 6. Review fixes: publish safety, test gating, hardening
+
+- [ ] 6.1 Publish only on a tag *push*: add `github.event_name == 'push'` to the `publish` condition, so a manual dispatch started on a tag ref can't create a Release; verify with a dispatch run on a throwaway tag ref that `publish` is skipped, then delete the tag
+- [ ] 6.2 Gate publishing on the checks: add a `check` job to `release.yml` (format check and tests, as in `ci.yml`), make `publish` need both `check` and `build`, and add the "Release requires passing checks" requirement to the spec; verify the job runs on a dispatch and `make validate` is green
+- [ ] 6.3 Make release builds clean: replace the `restore-keys` prefix fallback in `release.yml` with an exact-key cache; limit `ci.yml`'s `push` trigger to `main` and `v*` tags (PRs still run via `pull_request`); replace `"${flags[@]}"` with an `if` that is safe under `set -u`; verify with a pushed branch and a dispatch run
+- [ ] 6.4 Harden `scripts/test-release-scripts.sh`: assert positively that the archive listing shows owner `root`/`0/0` (and that `tar -tzvf` succeeded) instead of the grep-finds-nothing check; confirm by temporarily dropping the owner flags and seeing the test fail; and add the "archive in the current directory" note to the README checksum snippet

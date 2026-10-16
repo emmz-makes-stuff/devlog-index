@@ -65,3 +65,19 @@ either fails.
 #### Scenario: Failing test
 - **WHEN** a pull request breaks a test
 - **THEN** the CI workflow fails
+
+### Requirement: Release requires passing checks
+A tag-triggered release SHALL run the format check and the test suite, and SHALL NOT publish a GitHub Release
+unless both pass.
+
+#### Scenario: Failing check on a tag
+- **WHEN** a tag `v*` is pushed and the format check or the test suite fails
+- **THEN** no GitHub Release is published
+
+### Requirement: Publishing only from a tag push
+Only a push of a tag matching `v*` SHALL publish a GitHub Release; a manual dispatch SHALL NOT, even when
+started on a tag ref.
+
+#### Scenario: Dispatch on a tag ref
+- **WHEN** the release workflow is run manually with a tag selected as the ref
+- **THEN** no GitHub Release is created or modified
