@@ -8,12 +8,12 @@ what automated checks run on every push and pull request.
 ## ADDED Requirements
 
 ### Requirement: Release targets
-A release SHALL contain a `devlog-index` binary for each of windows-x64, macos-arm64, linux-x64 and
-linux-arm64, each built with `ReleaseFast`.
+A release SHALL contain a `devlog-index` binary for each of macos-arm64, linux-x64 and linux-arm64, each
+built with `ReleaseFast`.
 
-#### Scenario: All four targets present
+#### Scenario: All three targets present
 - **WHEN** a release build completes
-- **THEN** it has produced exactly one binary for each of the four targets, and none is missing
+- **THEN** it has produced exactly one binary for each of the three targets, and none is missing
 
 #### Scenario: A target fails
 - **WHEN** the build for any one target fails
@@ -21,15 +21,15 @@ linux-arm64, each built with `ReleaseFast`.
 
 ### Requirement: Archive packaging
 Each target's binary SHALL be packaged as a single archive named after the version and target, containing the
-binary and the LICENSE file. Windows archives SHALL be `.zip`; the others SHALL be `.tar.gz`.
+binary and the LICENSE file, as a `.tar.gz`.
 
 #### Scenario: Archive naming
 - **WHEN** tag `v1.2.3` is released
-- **THEN** the archives are named `devlog-index-v1.2.3-<target>` with the extension for that platform
+- **THEN** the archives are named `devlog-index-v1.2.3-<target>.tar.gz`
 
 #### Scenario: Archive contents
 - **WHEN** an archive is extracted
-- **THEN** it contains `devlog-index` (`devlog-index.exe` on Windows) and `LICENSE`
+- **THEN** it contains `devlog-index` and `LICENSE`
 
 ### Requirement: Checksums
 A release SHALL include a `SHA256SUMS` file listing the SHA-256 of every archive.
@@ -44,7 +44,7 @@ attached.
 
 #### Scenario: Tag push
 - **WHEN** a tag `v0.1.0` is pushed and all builds succeed
-- **THEN** a GitHub Release `v0.1.0` exists with four archives and `SHA256SUMS`
+- **THEN** a GitHub Release `v0.1.0` exists with three archives and `SHA256SUMS`
 
 ### Requirement: Manual dry run
 A manual dispatch of the release workflow SHALL run the same builds and packaging as a tag push, upload the

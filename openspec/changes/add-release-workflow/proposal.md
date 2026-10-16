@@ -10,13 +10,17 @@ to run `make gates`.
 ## What Changes
 
 - Add a release workflow, triggered by a `v*` tag push or by manual dispatch, that builds `devlog-index`
-  for windows-x64, macos-arm64, linux-x64 and linux-arm64, cross-compiled with Zig from one ubuntu runner.
+  for macos-arm64, linux-x64 and linux-arm64, cross-compiled with Zig from one ubuntu runner.
 - A tag push publishes a GitHub Release carrying one archive per target plus a SHA-256 checksums file.
   A manual dispatch runs the same builds and uploads them as workflow artifacts, but publishes nothing.
 - Add a CI workflow that runs format and tests on pushes and pull requests.
-- Prove first that Zig can cross-compile the vendored C (sqlite, sqlite-vec) and the llama.cpp fork for all
-  four targets, particularly macOS without a local SDK and Windows; record the outcome in a devlog note.
-- README gains a "Download a release" section next to the source install.
+- Prove first that Zig can cross-compile the vendored C (sqlite, sqlite-vec) and the llama.cpp fork for the
+  three targets, particularly macOS without a local SDK; record the outcome in a devlog note.
+- Windows is out of scope. The spike showed `x86_64-windows` fails to compile in our own source (`Quiet` in
+  `src/model.zig` redirects stderr with POSIX `open`/`dup`/`dup2`), and `src/main.zig` locates the model cache
+  through `HOME`, so a Windows build needs real porting work. That is left to a future change.
+- README gains a "Download a release" section next to the source install, noting that Windows isn't yet
+  supported.
 
 ## Capabilities
 

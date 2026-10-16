@@ -13,19 +13,24 @@
 ## Goals / Non-Goals
 
 **Goals:**
-- One ubuntu job builds all four targets; builds are reproducible from the tag.
+- One ubuntu job builds all three targets; builds are reproducible from the tag.
 - CI mirrors `make format` and `make test` without the macOS-only libc setup.
 
 **Non-Goals:**
 - Code signing or notarization (macOS users may need to clear quarantine; documented in README).
+- Windows. The spike showed it fails to compile (`Quiet` in `src/model.zig` uses POSIX `open`/`dup`/`dup2`
+  through `std.c`) and `src/main.zig` assumes `HOME`. A native Windows runner would hit the same errors,
+  so it needs source porting, which is a future change.
 - Other targets (macos-x64, windows-arm64, musl), installers, Homebrew/winget packaging.
 - Running the cross-compiled binaries in CI (only the host-native linux-x64 binary is smoke-tested).
 
 ## Decisions
 
-- **Spike first.** Section 1 cross-compiles all four targets locally, before any workflow is written. If a
-  target can't be cross-compiled, stop and ask Emmz; the fallback is a native runner for that target only
-  (macos-14, windows-latest, ubuntu-24.04-arm) in a build matrix.
+- **Spike first.** Section 1 cross-compiles the targets before the real workflows are written, as a
+  throwaway GitHub Actions run on ubuntu-24.04 (the production host). A local amd64 OrbStack machine was
+  tried first but runs under Rosetta, which crashes Zig's `translate-c` (`bss_size overflow`). If a target
+  can't be cross-compiled, stop and ask Emmz; the fallback is a native runner for that target only
+  (macos-14, ubuntu-24.04-arm) in a build matrix.
 - **Zig cross-compile on one runner**, as chosen, over a native matrix: one toolchain install, no
   per-OS quirks, fast. Cost: foreign binaries are not executed in CI.
 - **Pinned Zig 0.16.0** via `mlugg/setup-zig` (or the ziglang.org tarball with checksum), matching
@@ -44,8 +49,10 @@
 
 ## Risks / Trade-offs
 
-- [Cross-compile fails for macOS or Windows (llama.cpp C++ / libc++)] → the spike finds it before any
+- [Cross-compile fails for macOS (llama.cpp C++ / libc++)] → the spike finds it before any real
   workflow is written; fallback is a native runner for that target.
+- [Finding, not a risk: Windows] The spike's `x86_64-windows` build compiled sqlite, sqlite-vec and
+  llama.cpp, then failed on two errors in our own source (`Quiet`). Deferred; see Non-Goals.
 - [Unexecuted foreign binaries could be broken] → only link-level checks are possible; accept and note in README.
 - [Unsigned macOS binary is quarantined by Gatekeeper] → document `xattr -d com.apple.quarantine`.
 - [Fork dependency fetched from GitHub at build time] → already true of every build; Zig's package hash pins it.
