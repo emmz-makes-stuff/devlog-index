@@ -17,9 +17,9 @@
 
 ## 4. Release workflow
 
-- [ ] 4.1 Add `.github/workflows/release.yml` with `v*` tag and `workflow_dispatch` triggers, a read-only `build` job that cross-compiles the three targets, packages them with the script, smoke-tests the linux-x64 binary, and uploads archives and `SHA256SUMS` as workflow artifacts; verify with a manual dispatch run and download the artifacts
-- [ ] 4.2 Add the tag-only `publish` job (`contents: write`, `needs: build`, `gh release create`); verify with a pre-release tag (e.g. `v0.0.1-rc1`) that the Release has three archives and `SHA256SUMS`, then delete the test release and tag
-- [ ] 4.3 Verify a dispatch run creates no Release and no tag
+- [x] 4.1 Add `.github/workflows/release.yml` with `v*` tag and `workflow_dispatch` triggers, a read-only `build` job that cross-compiles the three targets, packages them with the script, smoke-tests the linux-x64 binary, and uploads archives and `SHA256SUMS` as workflow artifacts; verify with a manual dispatch run and download the artifacts
+- [x] 4.2 Add the tag-only `publish` job (`contents: write`, `needs: build`, `gh release create`); verify with a pre-release tag (e.g. `v0.0.1-rc1`) that the Release has three archives and `SHA256SUMS`, then delete the test release and tag
+- [x] 4.3 Verify a dispatch run creates no Release and no tag
 
 ## 5. Docs
 
