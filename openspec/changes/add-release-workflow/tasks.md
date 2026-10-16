@@ -23,5 +23,5 @@
 
 ## 5. Docs
 
-- [ ] 5.1 Add a "Download a release" section to `README.md` (asset names, checksum verification, macOS quarantine note, where to put the binary, and that Windows isn't yet supported) and verify the documented commands work against the 4.2 release
-- [ ] 5.2 Update `docs/dependencies.md` if the workflows rely on a tool it doesn't list, and verify `make deps` still passes
+- [x] 5.1 Add a "Download a release" section to `README.md` (asset names, checksum verification, macOS quarantine note, where to put the binary, and that Windows isn't yet supported) and verify the documented commands work against the 4.2 release
+- [x] 5.2 Update `docs/dependencies.md` if the workflows rely on a tool it doesn't list, and verify `make deps` still passes
