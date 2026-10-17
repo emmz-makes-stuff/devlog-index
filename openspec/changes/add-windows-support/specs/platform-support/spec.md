@@ -11,7 +11,7 @@ options and output formats on each.
 
 #### Scenario: Same output on Windows
 - **WHEN** the same workspace is indexed and queried with `query --json` on Windows x64 and on Linux x64
-- **THEN** both outputs have the same fields, and each passage's `path` is reported with `/` separators
+- **THEN** both outputs have the same fields, each passage's `rel` uses `/` separators on both, and its `path` is the platform's native absolute path
 
 ### Requirement: Model cache location
 The embedding model SHALL be cached under `.devlog-index/models/` in the user's home directory, taken from

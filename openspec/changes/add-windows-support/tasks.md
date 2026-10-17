@@ -7,12 +7,12 @@
 
 ## 2. Platform code
 
-- [ ] 2.1 Add a `homeDir` helper (`HOME`, else `USERPROFILE`, else a fatal naming both) and replace the five `HOME` lookups in `src/main.zig`; verify with unit tests for the three cases and `make test` green
-- [ ] 2.2 Make `model.Quiet` redirect stderr through the CRT on Windows (`_open("NUL")`, `_dup`, `_dup2`), keeping the leave-stderr-alone fallback; update the doc comments in `src/model.zig` and `src/embed.zig`; verify `zig build -Dtarget=x86_64-windows` links `devlog-index.exe`, `zig build test -Dtarget=x86_64-windows` compiles the test binary (it can't run on macOS), and `make test` stays green
-- [ ] 2.3 Record workspace-relative passage paths with `/` separators and join with the native separator only to open files (`src/sources.zig` and its callers); verify with a test that feeds a `\`-separated relative path and expects `/` in the stored and printed path, and that existing path tests still pass
-- [ ] 2.4 Check `sources.zig`'s broken-link handling covers the errors Windows returns for unreadable or unresolvable links; make the symlink-creating tests skip with an explicit message when link creation is refused; verify with `make test` and a read of the skip output
-- [ ] 2.5 Set both `HOME` and `USERPROFILE` in `src/cli_test.zig`'s child environment; verify the CLI tests still pass
-- [ ] 2.6 `make gates` green; self-review against `platform-support` scenarios (one line per scenario saying which test or CI job covers it)
+- [x] 2.1 Add a `homeDir` helper (`HOME`, else `USERPROFILE`, else a fatal naming both) and replace the five `HOME` lookups in `src/main.zig`; verify with unit tests for the three cases and `make test` green
+- [x] 2.2 Make `model.Quiet` redirect stderr through the CRT on Windows (`_open("NUL")`, `_dup`, `_dup2`), keeping the leave-stderr-alone fallback; update the doc comments in `src/model.zig` and `src/embed.zig`; verify `zig build -Dtarget=x86_64-windows` links `devlog-index.exe`, `zig build test -Dtarget=x86_64-windows` compiles the test binary (it can't run on macOS), and `make test` stays green
+- [x] 2.3 Pin `Source.rel` to `/` separators with a test over the fixture that asserts no `rel` contains `\` and each `rel` starts `openspec/` (it runs natively on the Windows runner); `path` stays the native absolute path; verify `make test` green
+- [x] 2.4 Check `sources.zig`'s broken-link handling covers the errors Windows returns for unreadable or unresolvable links; make the symlink-creating tests skip with an explicit message when link creation is refused; verify with `make test` and a read of the skip output
+- [x] 2.5 Set both `HOME` and `USERPROFILE` in `src/cli_test.zig`'s child environment; verify the CLI tests still pass
+- [x] 2.6 `make gates` green; self-review against `platform-support` scenarios (one line per scenario saying which test or CI job covers it)
 
 ## 3. Packaging scripts
 

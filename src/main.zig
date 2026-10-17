@@ -68,7 +68,7 @@ pub fn main(init: std.process.Init) !void {
                 if (rebuild) "it is left out of the rebuilt index" else "its indexed passages are kept",
             });
 
-        const home = init.environ_map.get("HOME") orelse fatal("HOME is not set; it locates the model cache");
+        const home = homeDir(init);
         var mp = try update.ModelProvider.pinned(arena, init.gpa, init.io, home);
         defer mp.deinit();
         const t0 = std.Io.Timestamp.now(init.io, .awake);
@@ -96,7 +96,7 @@ pub fn main(init: std.process.Init) !void {
             if (std.mem.eql(u8, a, "--json")) json = true else usageExit("usage: devlog-index status [--json]\n");
         }
         const ws = resolveWorkspace(init, arena);
-        const home = init.environ_map.get("HOME") orelse fatal("HOME is not set; it locates the model cache");
+        const home = homeDir(init);
         const model_path = try model_url.cachePathZ(arena, home, try model_url.parse(model_url.pinned_url));
         var diag: status.Diag = .{};
         const s = status.gather(arena, init.io, ws, model_path, &diag) catch |err| switch (err) {
@@ -131,7 +131,7 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.trim(u8, text, " \t").len == 0) usageExit(query_usage);
 
         const ws = resolveWorkspace(init, arena);
-        const home = init.environ_map.get("HOME") orelse fatal("HOME is not set; it locates the model cache");
+        const home = homeDir(init);
         var mp = try update.ModelProvider.cachedForQuery(arena, init.gpa, init.io, home);
         defer mp.deinit();
         var diag: query.Diag = .{};
@@ -148,7 +148,7 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, args[1], "eval")) {
         if (args.len > 2) usageExit("usage: devlog-index eval\n");
         const ws = resolveWorkspace(init, arena);
-        const home = init.environ_map.get("HOME") orelse fatal("HOME is not set; it locates the model cache");
+        const home = homeDir(init);
         var mp = try update.ModelProvider.cachedForQuery(arena, init.gpa, init.io, home);
         defer mp.deinit();
         var diag: eval.Diag = .{};
@@ -175,6 +175,12 @@ fn resolveWorkspace(init: std.process.Init, arena: std.mem.Allocator) workspace.
         error.OutOfMemory => fatal("out of memory"),
         else => fatal(diag.message),
     };
+}
+
+/// The home directory that locates the model cache; exits naming both variables when neither is set.
+fn homeDir(init: std.process.Init) []const u8 {
+    return model_url.pickHome(init.environ_map.get("HOME"), init.environ_map.get("USERPROFILE")) orelse
+        fatal("neither HOME nor USERPROFILE is set; one of them locates the model cache");
 }
 
 fn fatal(message: []const u8) noreturn {

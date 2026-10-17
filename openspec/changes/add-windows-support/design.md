@@ -51,11 +51,7 @@ to be able to create them; a test that cannot create a link must say "skipped", 
 production behaviour changes beyond verifying that error set covers Windows' errors (e.g. `FileNotFound`,
 `AccessDenied`, reparse-point errors).
 
-**D4. Reported paths use `/`.** Passage paths are workspace-relative strings stored in the index and printed
-in `--json`. They are built with `std.fs.path.join`, which would use `\` on Windows, making an index and
-output differ by platform. Normalise at the point a relative path is recorded (the `rel` in `sources.zig`)
-and join to disk paths with the native separator only when opening files. Alternative: leave native
-separators — rejected, it breaks the agent query skill's output expectations and any golden set.
+**D4. `rel` is `/`-separated on every platform; `path` stays native.** `Source.rel` is already built by joining with a literal `/` while walking, so it is the same on Windows; `classify` depends on that. The absolute `path` (printed by `query`, stored as the file key) is whatever `std.fs.path.join` gives, so on Windows it is `C:\Users\…`. Emmz chose this over converting it to `C:/Users/…`: a native path opens directly and matches what the OS and other tools show, and nothing has to convert back when opening files. Work here is therefore a test that pins `rel` to `/` (it runs natively on the Windows runner) rather than production code. Alternative rejected: forward slashes in `path` — breaks the DB key = OS path equivalence for no reader benefit.
 
 **D5. Windows zip, Linux-built.** Keep one cross-compiling Linux `build` job and add `x86_64-windows` to its
 loop; package with a new `.zip` branch in `package-release.sh` using `zip` (installed on `ubuntu-24.04`;

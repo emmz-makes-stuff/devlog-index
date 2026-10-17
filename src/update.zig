@@ -898,7 +898,7 @@ test "swapIn: an access error other than a missing file deletes nothing" {
     try f.write(".devlog-index/index.db.rebuild", "built");
     try f.write(".devlog-index/index.db-wal", "a writer's WAL");
     // A link to itself: access fails with a loop, not FileNotFound.
-    try f.tmp.dir.symLink(testing.io, "index.db", ".devlog-index/index.db", .{});
+    try @import("testutil.zig").symLinkOrSkip(f.tmp.dir, testing.io, "index.db", ".devlog-index/index.db", .{});
 
     const live = try std.fs.path.joinZ(f.arena(), &.{ f.root, ".devlog-index", "index.db" });
     if (swapIn(f.arena(), testing.io, try std.fmt.allocPrintSentinel(f.arena(), "{s}.rebuild", .{live}, 0), live)) |_|

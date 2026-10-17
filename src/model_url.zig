@@ -84,6 +84,14 @@ pub fn parse(url: []const u8) Error!Parsed {
     };
 }
 
+/// The home directory that holds the model cache: `HOME`, else `USERPROFILE`
+/// (Windows). An empty value counts as unset.
+pub fn pickHome(home: ?[]const u8, userprofile: ?[]const u8) ?[]const u8 {
+    if (home) |h| if (h.len > 0) return h;
+    if (userprofile) |u| if (u.len > 0) return u;
+    return null;
+}
+
 /// Compose the on-disk cache path for a parsed URL.
 /// Layout: `{home}/.devlog-index/models/{owner}/{repo}/{filename}`.
 /// Returns a heap-allocated sentinel-terminated slice (caller owns).
@@ -151,6 +159,14 @@ test "rejects subdir path after branch" {
 
 test "rejects missing filename" {
     try testing.expectError(Error.MalformedPath, parse("https://huggingface.co/o/r/resolve/main"));
+}
+
+test "pickHome prefers HOME, falls back to USERPROFILE, and ignores empty values" {
+    try testing.expectEqualStrings("/h", pickHome("/h", "C:\\u").?);
+    try testing.expectEqualStrings("C:\\u", pickHome(null, "C:\\u").?);
+    try testing.expectEqualStrings("C:\\u", pickHome("", "C:\\u").?);
+    try testing.expect(pickHome(null, null) == null);
+    try testing.expect(pickHome("", "") == null);
 }
 
 test "cachePathZ joins under home/.devlog-index/models" {

@@ -108,8 +108,8 @@ pub fn stripDatePrefix(dir: []const u8) []const u8 {
 /// path. Every member's real folders are walked first and symlinked folders
 /// after, in path order, so a folder reachable both directly and through a
 /// link is indexed at its real path; a directory whose target was already
-/// visited is skipped, so a loop ends. A link that leads nowhere (or loops on
-/// itself) is skipped, and its path is appended to `broken` when given.
+/// visited is skipped, so a loop ends. A link that leads nowhere, loops on
+/// itself, or that the OS refuses to resolve is skipped, and its path is appended to `broken` when given.
 pub fn discover(arena: Allocator, io: Io, ws: workspace.Workspace, broken: ?*std.ArrayList([]const u8)) ![]Source {
     var w: Walk = .{ .arena = arena, .io = io, .broken = broken };
     for (ws.members) |m| {
@@ -171,7 +171,7 @@ const Walk = struct {
                 .file => try w.file(child_abs, child_rel),
                 .sym_link => {
                     const st = d.statFile(w.io, entry.name, .{}) catch |err| switch (err) {
-                        error.FileNotFound, error.NotDir, error.SymLinkLoop => {
+                        error.FileNotFound, error.NotDir, error.SymLinkLoop, error.AccessDenied, error.PermissionDenied => {
                             if (w.broken) |b| try b.append(w.arena, child_abs);
                             continue;
                         },
@@ -312,6 +312,12 @@ test "discover lists exactly the fixture's indexed files" {
     }
     for (want, got.items) |w, g| try testing.expectEqualStrings(w, g);
 
+    // `rel` is `/`-separated on every platform; only `path` is native.
+    for (found) |s| {
+        try testing.expect(std.mem.startsWith(u8, s.rel, "openspec/"));
+        try testing.expect(std.mem.indexOfScalar(u8, s.rel, '\\') == null);
+    }
+
     // Absolute paths point at the files and archived metadata is carried.
     for (found) |s| {
         try testing.expect(std.mem.startsWith(u8, s.path, ws.root));
@@ -330,10 +336,10 @@ test "discover follows symlinked files and directories, skips a loop, reports a 
 
     try f.write("elsewhere/20260402-0900-decision-linked.md", "# Linked\n\nA note kept outside the tree.\n");
     try f.write("elsewhere/specs/linked/spec.md", "# Linked spec\n\nA spec kept outside the tree.\n");
-    try d.symLink(io, try f.path("elsewhere/20260402-0900-decision-linked.md"), "alpha/openspec/changes/add-cache/devlog/20260402-0900-decision-linked.md", .{});
-    try d.symLink(io, try f.path("elsewhere/specs/linked"), "beta/openspec/specs/linked", .{ .is_directory = true });
-    try d.symLink(io, try f.path("alpha/openspec/specs"), "alpha/openspec/specs/auth/loop", .{ .is_directory = true });
-    try d.symLink(io, try f.path("elsewhere/gone.md"), "alpha/openspec/changes/add-cache/devlog/20260403-0900-note-gone.md", .{});
+    try testutil.symLinkOrSkip(d, io, try f.path("elsewhere/20260402-0900-decision-linked.md"), "alpha/openspec/changes/add-cache/devlog/20260402-0900-decision-linked.md", .{});
+    try testutil.symLinkOrSkip(d, io, try f.path("elsewhere/specs/linked"), "beta/openspec/specs/linked", .{ .is_directory = true });
+    try testutil.symLinkOrSkip(d, io, try f.path("alpha/openspec/specs"), "alpha/openspec/specs/auth/loop", .{ .is_directory = true });
+    try testutil.symLinkOrSkip(d, io, try f.path("elsewhere/gone.md"), "alpha/openspec/changes/add-cache/devlog/20260403-0900-note-gone.md", .{});
 
     var diag: workspace.Diag = .{};
     const ws = try workspace.resolve(f.arena(), io, f.root, &diag);
@@ -375,13 +381,13 @@ test "discover indexes a folder reachable directly and through a link at its rea
 
     // Both links sort before the real `specs/auth`: "alias" < "auth", and
     // "changes" < "specs".
-    try d.symLink(io, try f.path("alpha/openspec/specs/auth"), "alpha/openspec/specs/alias", .{ .is_directory = true });
-    try d.symLink(io, try f.path("alpha/openspec/specs/auth"), "alpha/openspec/changes/add-cache/specs/linked", .{ .is_directory = true });
+    try testutil.symLinkOrSkip(d, io, try f.path("alpha/openspec/specs/auth"), "alpha/openspec/specs/alias", .{ .is_directory = true });
+    try testutil.symLinkOrSkip(d, io, try f.path("alpha/openspec/specs/auth"), "alpha/openspec/changes/add-cache/specs/linked", .{ .is_directory = true });
     // A link inside a followed link is followed too.
     try f.write("elsewhere/nested/spec.md", "# Nested spec\n\nReached through two links.\n");
     try d.createDirPath(io, "elsewhere/outer");
-    try d.symLink(io, try f.path("elsewhere/nested"), "elsewhere/outer/nested", .{ .is_directory = true });
-    try d.symLink(io, try f.path("elsewhere/outer"), "beta/openspec/specs/outer", .{ .is_directory = true });
+    try testutil.symLinkOrSkip(d, io, try f.path("elsewhere/nested"), "elsewhere/outer/nested", .{ .is_directory = true });
+    try testutil.symLinkOrSkip(d, io, try f.path("elsewhere/outer"), "beta/openspec/specs/outer", .{ .is_directory = true });
 
     var diag: workspace.Diag = .{};
     const ws = try workspace.resolve(f.arena(), io, f.root, &diag);
