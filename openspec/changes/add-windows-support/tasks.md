@@ -36,7 +36,7 @@
 
 ## 6. Human verification on Windows
 
-- [ ] 6.1 STOP for Emmz: on a Windows machine, install via `install.ps1`, run `devlog-index update` and `query` on a real workspace and judge whether the results look right; I provide a copy-pasteable recipe and write the result in the devlog
+- [x] 6.1 STOP for Emmz: on a Windows machine, install via `install.ps1`, run `devlog-index update` and `query` on a real workspace and judge whether the results look right; I provide a copy-pasteable recipe and write the result in the devlog
 
 ## Workflow follow-up
 
