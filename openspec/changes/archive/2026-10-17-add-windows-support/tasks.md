@@ -1,0 +1,52 @@
+# Tasks
+
+## 1. Windows build feasibility
+
+- [x] 1.1 Run `zig build -Doptimize=ReleaseFast -Dtarget=x86_64-windows` on the Mac through `make`'s libc setup (or unset `ZIG_LIBC` if it interferes) and verify it either links `devlog-index.exe` or record the exact failure in a devlog note
+- [x] 1.2 If it fails inside `daemonicai/llama.cpp.zig`, SQLite or sqlite-vec, stop and ask Emmz before changing the fork pin or vendored C (per CLAUDE.md "Stop and ask"); verify by a `stopped-…` devlog note stating the error and the question (not triggered: the C libraries built; only our `Quiet` code failed)
+
+## 2. Platform code
+
+- [x] 2.1 Add a `homeDir` helper (`HOME`, else `USERPROFILE`, else a fatal naming both) and replace the five `HOME` lookups in `src/main.zig`; verify with unit tests for the three cases and `make test` green
+- [x] 2.2 Make `model.Quiet` redirect stderr through the CRT on Windows (`_open("NUL")`, `_dup`, `_dup2`), keeping the leave-stderr-alone fallback; update the doc comments in `src/model.zig` and `src/embed.zig`; verify `zig build -Dtarget=x86_64-windows` links `devlog-index.exe`, `zig build test -Dtarget=x86_64-windows` compiles the test binary (it can't run on macOS), and `make test` stays green
+- [x] 2.3 Pin `Source.rel` to `/` separators with a test over the fixture that asserts no `rel` contains `\` and each `rel` starts `openspec/` (it runs natively on the Windows runner); `path` stays the native absolute path; verify `make test` green
+- [x] 2.4 Check `sources.zig`'s broken-link handling covers the errors Windows returns for unreadable or unresolvable links; make the symlink-creating tests skip with an explicit message when link creation is refused; verify with `make test` and a read of the skip output
+- [x] 2.5 Set both `HOME` and `USERPROFILE` in `src/cli_test.zig`'s child environment; verify the CLI tests still pass
+- [x] 2.6 `make gates` green; self-review against `platform-support` scenarios (one line per scenario saying which test or CI job covers it)
+
+## 3. Packaging scripts
+
+- [x] 3.1 Teach `scripts/package-release.sh` the `windows-x64` target: archive `devlog-index.exe` + `LICENSE` as `devlog-index-<version>-windows-x64.zip`; update its usage text; verify with `scripts/test-release-scripts.sh`
+- [x] 3.2 Make `scripts/checksums.sh` list `*.zip` as well as `*.tar.gz`; verify `SHA256SUMS` covers four archives in the script test
+- [x] 3.3 Extend `scripts/test-release-scripts.sh` for the zip: name, exact contents, exe bit not required, unknown target still rejected; verify it prints no `FAIL` on macOS and Linux
+- [x] 3.4 `make gates` green
+
+## 4. Workflows
+
+- [x] 4.1 Add a `windows-latest` job to `.github/workflows/ci.yml` that installs Zig 0.16.0 (pinned download and SHA-256 as the Linux job does) and runs `zig build test --summary all`; verify it is green: the identical job ran green in the release dry run (run 39042076641); `ci.yml` itself only triggers on a pull request, so its first run is the PR for this branch
+- [x] 4.2 Add the same Windows test job to `release.yml`, make publishing depend on it, and add `windows-x64:x86_64-windows` to the cross-build loop; verify with a `workflow_dispatch` dry run that four archives and `SHA256SUMS` are uploaded as workflow artifacts and no Release is created
+- [x] 4.3 Add a smoke test that runs `devlog-index.exe --help` on the Windows runner against the real built binary and checks `Usage: devlog-index`; verify in the dry run
+- [x] 4.4 `make validate` green and self-review the workflows against the `release-distribution` delta, including the "Release requires passing checks" and "Publishing only from a tag push" requirements
+
+## 5. Installer and docs
+
+- [x] 5.1 Write `install.ps1` (`-Version`, default latest; download zip + `SHA256SUMS`; `Get-FileHash` compare; install to `$env:LOCALAPPDATA\Programs\devlog-index`; `PATH` hint); verify it runs under `pwsh` (macOS) against a locally served copy of the dry-run zip and installs the exact bytes of its `devlog-index.exe`; running that exe on Windows is left to 6.1
+- [x] 5.2 Verify the checksum-mismatch path: point it at a tampered archive and confirm it installs nothing and exits non-zero naming both hashes
+- [x] 5.3 Update `README.md` (Windows install, `USERPROFILE` model cache location, symlink caveat); running its commands as written on Windows is left to 6.1
+
+## 6. Human verification on Windows
+
+- [x] 6.1 STOP for Emmz: on a Windows machine, install via `install.ps1`, run `devlog-index update` and `query` on a real workspace and judge whether the results look right; I provide a copy-pasteable recipe and write the result in the devlog
+
+## Workflow follow-up
+
+- Run the whole-change review (and offer `code-review`) per CLAUDE.md before archiving.
+- Archive the change with `/opsx:archive` after Emmz agrees; it syncs `platform-support` and the `release-distribution` delta into the main specs.
+
+## 7. Review fixes: docs, workflow duplication, Quiet test, tidy
+
+- [x] 7.1 List `zip`/`unzip` in `docs/dependencies.md` (and `make deps` if it checks the others)
+- [x] 7.2 Correct the README symlink sentence: the privilege is needed to create links, not follow them
+- [x] 7.3 Move the `check-windows` job into one reusable workflow called from `ci.yml` and `release.yml`; verify on the PR and a release dry run
+- [x] 7.4 Add a test for `model.Quiet` (begin/restore keeps stderr usable) that runs on Windows CI
+- [x] 7.5 Tidy: reflow the long doc comments in `src/sources.zig` and `src/model.zig`; import `testutil.zig` once per test file instead of inline

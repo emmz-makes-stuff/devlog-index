@@ -306,10 +306,16 @@ test "resolveMember: relative to root, absolute as-is, normalised" {
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    try testing.expectEqualStrings("/w/api", try resolveMember(arena, "/w", "api"));
-    try testing.expectEqualStrings("/w/api", try resolveMember(arena, "/w", "./api/"));
-    try testing.expectEqualStrings("/other/infra", try resolveMember(arena, "/w", "../other/infra"));
-    try testing.expectEqualStrings("/abs/x", try resolveMember(arena, "/w", "/abs/x"));
+    // A rooted path with no drive letter is not absolute on Windows.
+    const w, const other, const abs = if (@import("builtin").os.tag == .windows)
+        .{ "C:\\w", "C:\\other", "C:\\abs" }
+    else
+        .{ "/w", "/other", "/abs" };
+    const sep = std.fs.path.sep_str;
+    try testing.expectEqualStrings(w ++ sep ++ "api", try resolveMember(arena, w, "api"));
+    try testing.expectEqualStrings(w ++ sep ++ "api", try resolveMember(arena, w, "./api/"));
+    try testing.expectEqualStrings(other ++ sep ++ "infra", try resolveMember(arena, w, "../other/infra"));
+    try testing.expectEqualStrings(abs ++ sep ++ "x", try resolveMember(arena, w, abs ++ sep ++ "x"));
 }
 
 test "resolve walks up from a member subdirectory and reports member status" {

@@ -9,13 +9,32 @@ came from. Nothing leaves the machine.
 ### Download a release
 
 Each [release](https://github.com/emmz-makes-stuff/devlog-index/releases) has a binary for macOS on Apple
-silicon, and for Linux on x86-64 and arm64. Windows isn't supported yet.
+silicon, for Linux on x86-64 and arm64, and for Windows on x86-64.
 
 | Platform | `target` |
 |---|---|
 | macOS, Apple silicon | `macos-arm64` |
 | Linux, x86-64 | `linux-x64` |
 | Linux, arm64 | `linux-arm64` |
+| Windows, x86-64 | `windows-x64` |
+
+On Windows, use the installer. It needs no administrator rights: it downloads the release zip, checks it
+against `SHA256SUMS`, and installs `devlog-index.exe` to `%LOCALAPPDATA%\Programs\devlog-index`. If the
+checksum doesn't match it installs nothing and exits non-zero.
+
+```powershell
+# download install.ps1 from the repository, then, in PowerShell:
+.\install.ps1                    # the latest release
+.\install.ps1 -Version v0.1.0    # a specific release
+```
+
+The script says whether the install directory is on your `PATH` and prints the command to add it. Run it as
+a file, as above, so a failure shows up in the exit code. On Windows the model is cached in
+`%USERPROFILE%\.devlog-index\models` (`HOME` takes precedence when it's set, as in Git Bash). A workspace
+that contains symlinks is indexed as usual. Creating symlinks on Windows needs Developer Mode or an elevated
+shell. A link the account can't follow is listed as broken and skipped, and everything else is still indexed.
+
+The macOS and Linux steps below are for a manual install.
 
 ```sh
 tag=v0.1.0             # the release you want

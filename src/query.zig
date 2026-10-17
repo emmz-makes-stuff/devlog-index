@@ -702,7 +702,7 @@ test "query: labels on an archived decision note; --json lines all parse" {
     try testing.expectEqualStrings("archived", top.state);
     try testing.expectEqualStrings("decision", top.kind);
     try testing.expectEqualStrings("2026-03-10 10:15", top.note_time.?);
-    try testing.expect(std.mem.endsWith(u8, top.path, "devlog/20260310-1015-decision-retry-policy.md"));
+    try testing.expect(std.mem.endsWith(u8, top.path, try testutil.native(f.arena(), "devlog/20260310-1015-decision-retry-policy.md")));
     try testing.expectEqualStrings("lexical", top.methods[0]);
 
     var buf: Io.Writer.Allocating = .init(f.arena());
@@ -960,7 +960,9 @@ test "thread: text output shows entries under their result, marked as later note
     var buf: Io.Writer.Allocating = .init(f.arena());
     try writeText(&.{r}, &buf.writer);
     const text = buf.written();
-    const entry = std.mem.indexOf(u8, text, "\n   ↳ later note · 2026-03-12 11:00 · answer\n     /") orelse return error.TestExpectedThreadEntry;
+    const heading = "\n   ↳ later note · 2026-03-12 11:00 · answer\n     ";
+    const entry = std.mem.indexOf(u8, text, heading) orelse return error.TestExpectedThreadEntry;
+    try testing.expect(std.fs.path.isAbsolute(text[entry + heading.len ..]));
     try testing.expect(entry > std.mem.indexOf(u8, text, "no test credentials").?);
     try testing.expect(std.mem.indexOf(u8, text[entry..], "\n     Emmz answered the question in the 0915 note") != null);
 }

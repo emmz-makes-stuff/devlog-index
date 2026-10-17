@@ -80,7 +80,7 @@ pub const Embedder = struct {
     ///
     /// When `quiet` is true, stderr is redirected to /dev/null for the
     /// duration of `llama_init_from_model` to suppress the verbose
-    /// context-construction diagnostics (POSIX-only, graceful fallback).
+    /// context-construction diagnostics (graceful fallback).
     pub fn init(model: model_mod.Model, quiet: bool) Error!Embedder {
         var params = c.llama_context_default_params();
         params.embeddings = true;

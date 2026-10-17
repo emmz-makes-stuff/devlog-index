@@ -37,3 +37,6 @@ jobs:
 
       - name: Release scripts
         run: scripts/test-release-scripts.sh
+
+  check-windows:
+    uses: ./.github/workflows/check-windows.yml

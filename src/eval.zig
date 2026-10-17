@@ -373,7 +373,7 @@ test "eval: no golden set fails saying where it is expected" {
     const ws = try workspace.resolve(f.arena(), testing.io, f.root, &wdiag);
     var diag: Diag = .{};
     try testing.expectError(error.EvalFailed, run(f.arena(), testing.allocator, testing.io, ws, .{ .provider = stub.provider(), .model_url = "test://stub" }, &diag));
-    try testing.expectEqualStrings(try std.fmt.allocPrint(f.arena(), "no golden set: expected it at {s}/.devlog-index/golden.json", .{f.root}), diag.message);
+    try testing.expectEqualStrings(try std.fmt.allocPrint(f.arena(), "no golden set: expected it at {s}", .{try std.fs.path.join(f.arena(), &.{ f.root, ".devlog-index", "golden.json" })}), diag.message);
 }
 
 test "eval: an invalid or empty golden set fails naming the file" {

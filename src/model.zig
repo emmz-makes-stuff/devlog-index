@@ -7,6 +7,7 @@
 //! `llama_model *`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const c = @import("llama_c");
 
 pub const Error = error{
@@ -34,14 +35,35 @@ pub fn deinitBackend() void {
     c.llama_backend_free();
 }
 
-/// Redirects STDERR_FILENO to /dev/null until `restore`, to silence
-/// llama.cpp's direct `fprintf(stderr, …)` chatter. POSIX-only; if
-/// /dev/null can't be opened or `dup` fails, stderr is left intact.
+/// Redirects stderr to the null device until `restore`, to silence
+/// llama.cpp's direct `fprintf(stderr, …)` chatter. If the null device can't
+/// be opened or `dup` fails, stderr is left intact.
 pub const Quiet = struct {
     saved: c_int = -1,
 
+    // llama.cpp writes through the C runtime's stderr, so on Windows the
+    // redirect has to go through the CRT's file descriptors too: `std.c`
+    // models Windows fds as handles, and `SetStdHandle` would not touch fd 2.
+    const crt = struct {
+        extern "c" fn _open(path: [*:0]const u8, oflag: c_int, ...) c_int;
+        extern "c" fn _dup(fd: c_int) c_int;
+        extern "c" fn _dup2(old: c_int, new: c_int) c_int;
+        extern "c" fn _close(fd: c_int) c_int;
+        const o_wronly = 0x0001;
+    };
+
+    const stderr_fd: c_int = 2;
+
     pub fn begin(on: bool) Quiet {
         if (!on) return .{};
+        if (builtin.os.tag == .windows) {
+            const null_fd = crt._open("NUL", crt.o_wronly);
+            if (null_fd < 0) return .{};
+            defer _ = crt._close(null_fd);
+            const saved = crt._dup(stderr_fd);
+            if (saved >= 0) _ = crt._dup2(null_fd, stderr_fd);
+            return .{ .saved = saved };
+        }
         const dev_null = std.c.open("/dev/null", .{ .ACCMODE = .WRONLY }, @as(std.c.mode_t, 0));
         if (dev_null < 0) return .{};
         defer _ = std.c.close(dev_null);
@@ -52,6 +74,11 @@ pub const Quiet = struct {
 
     pub fn restore(self: Quiet) void {
         if (self.saved < 0) return;
+        if (builtin.os.tag == .windows) {
+            _ = crt._dup2(self.saved, stderr_fd);
+            _ = crt._close(self.saved);
+            return;
+        }
         _ = std.c.dup2(self.saved, std.posix.STDERR_FILENO);
         _ = std.c.close(self.saved);
     }
@@ -61,10 +88,10 @@ pub const LoadOptions = struct {
     /// When true, silence direct `fprintf(stderr, …)` chatter from the
     /// llama.cpp loader (`llama_model_loader:`, `print_info:`,
     /// `load_tensors:`, `create_tensor:`) by redirecting STDERR_FILENO to
-    /// `/dev/null` for the duration of `llama_model_load_from_file`. The
-    /// callback path (covered by `llama_log_set(null, null)` in
-    /// `initBackend`) is unaffected. POSIX-only; on platforms where
-    /// `/dev/null` cannot be opened or `dup` fails the load proceeds with
+    /// `/dev/null` (`NUL` on Windows) for the duration of
+    /// `llama_model_load_from_file`. The callback path (covered by
+    /// `llama_log_set(null, null)` in `initBackend`) is unaffected. Where the
+    /// null device cannot be opened or `dup` fails the load proceeds with
     /// stderr intact rather than failing.
     quiet: bool = false,
 };
@@ -105,3 +132,15 @@ pub const Model = struct {
         return if (n > 0) @intCast(n) else 0;
     }
 };
+
+test "Quiet: redirecting stderr and restoring keeps it usable" {
+    const off = Quiet.begin(false);
+    try std.testing.expect(off.saved < 0);
+    off.restore();
+
+    const q = Quiet.begin(true);
+    // A failed redirect leaves stderr alone; where the null device opens, the original fd must be saved.
+    try std.testing.expect(q.saved >= 0);
+    q.restore();
+    std.debug.print("", .{}); // stderr still accepts writes after the restore
+}

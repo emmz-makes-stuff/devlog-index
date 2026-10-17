@@ -14,11 +14,12 @@ const Run = struct {
     stderr: []const u8,
 };
 
-/// Runs the binary in `cwd` with HOME set to `home` and nothing else in its
+/// Runs the binary in `cwd` with HOME and USERPROFILE set to `home` and nothing else in its
 /// environment.
 fn cli(arena: std.mem.Allocator, cwd: []const u8, home: []const u8, args: []const []const u8) !Run {
     var env: std.process.Environ.Map = .init(arena);
     try env.put("HOME", home);
+    try env.put("USERPROFILE", home); // the Windows spelling of HOME
     // The build passes the exe relative to the build root (the test's cwd);
     // the child runs elsewhere.
     const exe = try std.fs.path.resolve(arena, &.{ try std.process.currentPathAlloc(testing.io, arena), @import("test_options").exe });
