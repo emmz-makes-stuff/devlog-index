@@ -702,7 +702,7 @@ test "query: labels on an archived decision note; --json lines all parse" {
     try testing.expectEqualStrings("archived", top.state);
     try testing.expectEqualStrings("decision", top.kind);
     try testing.expectEqualStrings("2026-03-10 10:15", top.note_time.?);
-    try testing.expect(std.mem.endsWith(u8, top.path, try @import("testutil.zig").native(f.arena(), "devlog/20260310-1015-decision-retry-policy.md")));
+    try testing.expect(std.mem.endsWith(u8, top.path, try testutil.native(f.arena(), "devlog/20260310-1015-decision-retry-policy.md")));
     try testing.expectEqualStrings("lexical", top.methods[0]);
 
     var buf: Io.Writer.Allocating = .init(f.arena());

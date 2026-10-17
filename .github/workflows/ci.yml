@@ -38,23 +38,5 @@ jobs:
       - name: Release scripts
         run: scripts/test-release-scripts.sh
 
-  # The suite runs natively on Windows: the release binary is cross-built on Linux, so this is the
-  # only place its Windows-specific code is exercised.
   check-windows:
-    runs-on: windows-2025
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Install Zig 0.16.0
-        shell: pwsh
-        run: |
-          Invoke-WebRequest https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip -OutFile zig.zip
-          $hash = (Get-FileHash zig.zip -Algorithm SHA256).Hash.ToLower()
-          if ($hash -ne "68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e") { throw "zig.zip sha256 mismatch: $hash" }
-          Expand-Archive zig.zip -DestinationPath .
-          "$PWD\zig-x86_64-windows-0.16.0" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-
-      - name: Test
-        shell: pwsh
-        run: zig build test --summary all
+    uses: ./.github/workflows/check-windows.yml

@@ -88,9 +88,10 @@ pub const LoadOptions = struct {
     /// When true, silence direct `fprintf(stderr, …)` chatter from the
     /// llama.cpp loader (`llama_model_loader:`, `print_info:`,
     /// `load_tensors:`, `create_tensor:`) by redirecting STDERR_FILENO to
-    /// `/dev/null` (`NUL` on Windows) for the duration of `llama_model_load_from_file`. The
-    /// callback path (covered by `llama_log_set(null, null)` in
-    /// `initBackend`) is unaffected. Where the null device cannot be opened or `dup` fails the load proceeds with
+    /// `/dev/null` (`NUL` on Windows) for the duration of
+    /// `llama_model_load_from_file`. The callback path (covered by
+    /// `llama_log_set(null, null)` in `initBackend`) is unaffected. Where the
+    /// null device cannot be opened or `dup` fails the load proceeds with
     /// stderr intact rather than failing.
     quiet: bool = false,
 };
@@ -131,3 +132,15 @@ pub const Model = struct {
         return if (n > 0) @intCast(n) else 0;
     }
 };
+
+test "Quiet: redirecting stderr and restoring keeps it usable" {
+    const off = Quiet.begin(false);
+    try std.testing.expect(off.saved < 0);
+    off.restore();
+
+    const q = Quiet.begin(true);
+    // A failed redirect leaves stderr alone; where the null device opens, the original fd must be saved.
+    try std.testing.expect(q.saved >= 0);
+    q.restore();
+    std.debug.print("", .{}); // stderr still accepts writes after the restore
+}

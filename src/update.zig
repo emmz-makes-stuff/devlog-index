@@ -625,8 +625,9 @@ pub const ModelProvider = struct {
 // ---- tests ----
 
 const testing = std.testing;
-const Stub = @import("testutil.zig").Stub;
-const Fixture = @import("testutil.zig").Fixture;
+const testutil = @import("testutil.zig");
+const Stub = testutil.Stub;
+const Fixture = testutil.Fixture;
 
 const new_note =
     \\# Decision: token audience
@@ -903,7 +904,7 @@ test "swapIn: an access error other than a missing file deletes nothing" {
     try f.write(".devlog-index/index.db.rebuild", "built");
     try f.write(".devlog-index/index.db-wal", "a writer's WAL");
     // A link to itself: access fails with a loop, not FileNotFound.
-    try @import("testutil.zig").symLinkOrSkip(f.tmp.dir, testing.io, "index.db", ".devlog-index/index.db", .{});
+    try testutil.symLinkOrSkip(f.tmp.dir, testing.io, "index.db", ".devlog-index/index.db", .{});
 
     const live = try std.fs.path.joinZ(f.arena(), &.{ f.root, ".devlog-index", "index.db" });
     if (swapIn(f.arena(), testing.io, try std.fmt.allocPrintSentinel(f.arena(), "{s}.rebuild", .{live}, 0), live)) |_|
@@ -1024,7 +1025,7 @@ test "snapshot: a file whose size and mtime match its row is not read; a same-si
     var read: usize = 0;
     for (snap) |s| if (s.text != null) {
         read += 1;
-        try testing.expect(std.mem.endsWith(u8, s.src.path, try @import("testutil.zig").native(f.arena(), rel)));
+        try testing.expect(std.mem.endsWith(u8, s.src.path, try testutil.native(f.arena(), rel)));
     };
     try testing.expectEqual(@as(usize, 1), read);
 

@@ -31,8 +31,8 @@ checksum doesn't match it installs nothing and exits non-zero.
 The script says whether the install directory is on your `PATH` and prints the command to add it. Run it as
 a file, as above, so a failure shows up in the exit code. On Windows the model is cached in
 `%USERPROFILE%\.devlog-index\models` (`HOME` takes precedence when it's set, as in Git Bash). A workspace
-that contains symlinks needs Developer Mode or an elevated shell to follow them; links that can't be
-followed are listed as broken and skipped, and everything else is still indexed.
+that contains symlinks is indexed as usual. Creating symlinks on Windows needs Developer Mode or an elevated
+shell. A link the account can't follow is listed as broken and skipped, and everything else is still indexed.
 
 The macOS and Linux steps below are for a manual install.
 

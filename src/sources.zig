@@ -109,7 +109,8 @@ pub fn stripDatePrefix(dir: []const u8) []const u8 {
 /// after, in path order, so a folder reachable both directly and through a
 /// link is indexed at its real path; a directory whose target was already
 /// visited is skipped, so a loop ends. A link that leads nowhere, loops on
-/// itself, or that the OS refuses to resolve is skipped, and its path is appended to `broken` when given.
+/// itself, or that the OS refuses to resolve is skipped, and its path is
+/// appended to `broken` when given.
 pub fn discover(arena: Allocator, io: Io, ws: workspace.Workspace, broken: ?*std.ArrayList([]const u8)) ![]Source {
     var w: Walk = .{ .arena = arena, .io = io, .broken = broken };
     for (ws.members) |m| {

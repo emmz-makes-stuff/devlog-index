@@ -9,6 +9,7 @@
 | macOS SDK 26.x | Zig 0.16.0's libc++ can't compile against SDK 27 headers; `make` points Zig at SDK 26 via `ZIG_LIBC` | 26.x, in the Command Line Tools | `ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX26.*.sdk` | — | Command Line Tools for Xcode 26 from https://developer.apple.com/download/all/ |
 | openspec | change tracking | any | `openspec --version` | — | `npm i -g @fission-ai/openspec` |
 | git | source control | any | `git --version` | — | `brew install git` |
+| zip, unzip | `scripts/package-release.sh` builds the windows-x64 zip; `scripts/test-release-scripts.sh` reads it back | any (macOS ships both) | `zip -v >/dev/null && unzip -v >/dev/null` | — | `brew install zip unzip` |
 
 Notes:
 

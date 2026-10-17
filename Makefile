@@ -70,5 +70,6 @@ deps:
 	xcrun --show-sdk-path >/dev/null 2>&1 || { echo "MISSING macOS SDK — xcode-select --install"; fail=1; }; \
 	openspec --version >/dev/null 2>&1 || { echo "MISSING openspec — npm i -g @fission-ai/openspec"; fail=1; }; \
 	git --version >/dev/null 2>&1 || { echo "MISSING git — brew install git"; fail=1; }; \
+	{ zip -v >/dev/null 2>&1 && unzip -v >/dev/null 2>&1; } || { echo "MISSING zip/unzip — brew install zip unzip"; fail=1; }; \
 	ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX26.*.sdk >/dev/null 2>&1 || { echo "MISSING macOS SDK 26.x — install Command Line Tools for Xcode 26 from https://developer.apple.com/download/all/"; fail=1; }; \
 	echo "DEPS_EXIT:$$fail"; exit $$fail

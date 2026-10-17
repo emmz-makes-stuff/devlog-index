@@ -42,3 +42,11 @@
 
 - Run the whole-change review (and offer `code-review`) per CLAUDE.md before archiving.
 - Archive the change with `/opsx:archive` after Emmz agrees; it syncs `platform-support` and the `release-distribution` delta into the main specs.
+
+## 7. Review fixes: docs, workflow duplication, Quiet test, tidy
+
+- [x] 7.1 List `zip`/`unzip` in `docs/dependencies.md` (and `make deps` if it checks the others)
+- [x] 7.2 Correct the README symlink sentence: the privilege is needed to create links, not follow them
+- [ ] 7.3 Move the `check-windows` job into one reusable workflow called from `ci.yml` and `release.yml`; verify on the PR and a release dry run
+- [ ] 7.4 Add a test for `model.Quiet` (begin/restore keeps stderr usable) that runs on Windows CI
+- [x] 7.5 Tidy: reflow the long doc comments in `src/sources.zig` and `src/model.zig`; import `testutil.zig` once per test file instead of inline
