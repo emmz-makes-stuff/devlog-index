@@ -33,6 +33,27 @@ jobs:
       - name: Release scripts
         run: scripts/test-release-scripts.sh
 
+  # The suite runs natively on Windows: the release binary is cross-built on Linux, so this is the
+  # only place its Windows-specific code is exercised.
+  check-windows:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Zig 0.16.0
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip -OutFile zig.zip
+          $hash = (Get-FileHash zig.zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne "68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e") { throw "zig.zip sha256 mismatch: $hash" }
+          Expand-Archive zig.zip -DestinationPath .
+          "$PWD\zig-x86_64-windows-0.16.0" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Test
+        shell: pwsh
+        run: zig build test --summary all
+
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -59,19 +80,20 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then version=$GITHUB_REF_NAME; else version="dev-${GITHUB_SHA::7}"; fi
           echo "version=$version"
           # release name : zig target
-          for pair in macos-arm64:aarch64-macos linux-x64:x86_64-linux linux-arm64:aarch64-linux; do
+          for pair in macos-arm64:aarch64-macos linux-x64:x86_64-linux linux-arm64:aarch64-linux windows-x64:x86_64-windows; do
             name=${pair%%:*}
             target=${pair##*:}
             echo "::group::$name ($target)"
             zig build -Doptimize=ReleaseFast -Dtarget="$target" --prefix "out/$name"
-            file "out/$name/bin/devlog-index"
+            file "out/$name/bin/"devlog-index*
             scripts/package-release.sh "$version" "$name" "out/$name"
             echo "::endgroup::"
           done
           scripts/checksums.sh dist
           cat dist/SHA256SUMS
 
-      # The only target the runner can execute; the others are checked by format only.
+      # The one target this runner can execute; windows-x64 is smoked on its own runner below, the
+      # macOS and arm64 builds are only checked to link.
       - name: Smoke test linux-x64
         run: |
           help=$(out/linux-x64/bin/devlog-index --help 2>&1) || true
@@ -84,10 +106,31 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  # Runs the cross-built release binary itself, from the archive that would be published.
+  smoke-windows:
+    needs: build
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: dist
+
+      - name: Smoke test windows-x64
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist/devlog-index-*-windows-x64.zip
+          if ($zip.Count -ne 1) { throw "expected one windows-x64 zip, found $($zip.Count)" }
+          Expand-Archive $zip[0].FullName -DestinationPath out
+          $help = (& .\out\devlog-index.exe --help 2>&1 | Out-String)
+          $help
+          if ($help -notmatch "(?m)^Usage: devlog-index") { throw "unexpected --help output" }
+
   publish:
     # Only a tag push publishes; a manual dispatch stops after `build`, even one started on a tag ref.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [check, build]
+    needs: [check, check-windows, build, smoke-windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
