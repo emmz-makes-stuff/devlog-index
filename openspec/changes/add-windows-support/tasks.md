@@ -16,10 +16,10 @@
 
 ## 3. Packaging scripts
 
-- [ ] 3.1 Teach `scripts/package-release.sh` the `windows-x64` target: archive `devlog-index.exe` + `LICENSE` as `devlog-index-<version>-windows-x64.zip`; update its usage text; verify with `scripts/test-release-scripts.sh`
-- [ ] 3.2 Make `scripts/checksums.sh` list `*.zip` as well as `*.tar.gz`; verify `SHA256SUMS` covers four archives in the script test
-- [ ] 3.3 Extend `scripts/test-release-scripts.sh` for the zip: name, exact contents, exe bit not required, unknown target still rejected; verify it prints no `FAIL` on macOS and Linux
-- [ ] 3.4 `make gates` green
+- [x] 3.1 Teach `scripts/package-release.sh` the `windows-x64` target: archive `devlog-index.exe` + `LICENSE` as `devlog-index-<version>-windows-x64.zip`; update its usage text; verify with `scripts/test-release-scripts.sh`
+- [x] 3.2 Make `scripts/checksums.sh` list `*.zip` as well as `*.tar.gz`; verify `SHA256SUMS` covers four archives in the script test
+- [x] 3.3 Extend `scripts/test-release-scripts.sh` for the zip: name, exact contents, exe bit not required, unknown target still rejected; verify it prints no `FAIL` on macOS and Linux
+- [x] 3.4 `make gates` green
 
 ## 4. Workflows
 
