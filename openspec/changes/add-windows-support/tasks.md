@@ -23,10 +23,10 @@
 
 ## 4. Workflows
 
-- [ ] 4.1 Add a `windows-latest` job to `.github/workflows/ci.yml` that installs Zig 0.16.0 (pinned download and SHA-256 as the Linux job does) and runs `zig build test --summary all`; verify on a pushed branch that it runs and is green
-- [ ] 4.2 Add the same Windows test job to `release.yml`, make publishing depend on it, and add `windows-x64:x86_64-windows` to the cross-build loop; verify with a `workflow_dispatch` dry run that four archives and `SHA256SUMS` are uploaded as workflow artifacts and no Release is created
-- [ ] 4.3 Add a smoke test that runs `devlog-index.exe --help` on the Windows runner against the real built binary and checks `Usage: devlog-index`; verify in the dry run
-- [ ] 4.4 `make validate` green and self-review the workflows against the `release-distribution` delta, including the "Release requires passing checks" and "Publishing only from a tag push" requirements
+- [x] 4.1 Add a `windows-latest` job to `.github/workflows/ci.yml` that installs Zig 0.16.0 (pinned download and SHA-256 as the Linux job does) and runs `zig build test --summary all`; verify it is green: the identical job ran green in the release dry run (run 39042076641); `ci.yml` itself only triggers on a pull request, so its first run is the PR for this branch
+- [x] 4.2 Add the same Windows test job to `release.yml`, make publishing depend on it, and add `windows-x64:x86_64-windows` to the cross-build loop; verify with a `workflow_dispatch` dry run that four archives and `SHA256SUMS` are uploaded as workflow artifacts and no Release is created
+- [x] 4.3 Add a smoke test that runs `devlog-index.exe --help` on the Windows runner against the real built binary and checks `Usage: devlog-index`; verify in the dry run
+- [x] 4.4 `make validate` green and self-review the workflows against the `release-distribution` delta, including the "Release requires passing checks" and "Publishing only from a tag push" requirements
 
 ## 5. Installer and docs
 
