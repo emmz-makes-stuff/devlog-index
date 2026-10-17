@@ -49,6 +49,11 @@ pub const Stub = struct {
     }
 };
 
+/// `rel` with its `/` separators swapped for the platform's, to compare with an absolute path.
+pub fn native(arena: Allocator, rel: []const u8) Allocator.Error![]u8 {
+    return std.mem.replaceOwned(u8, arena, rel, "/", std.fs.path.sep_str);
+}
+
 /// Creates a symlink, or skips the test when the platform refuses (a Windows
 /// account without the symlink privilege): a skip is reported, never a pass.
 pub fn symLinkOrSkip(dir: std.Io.Dir, io: std.Io, target: []const u8, link: []const u8, flags: std.Io.Dir.SymLinkFlags) !void {

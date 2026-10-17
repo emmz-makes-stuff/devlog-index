@@ -174,5 +174,6 @@ test "cachePathZ joins under home/.devlog-index/models" {
     defer arena.deinit();
     const p = try parse("https://huggingface.co/nomic-ai/x-GGUF/resolve/main/x.gguf");
     const path = try cachePathZ(arena.allocator(), "/Users/me", p);
-    try testing.expectEqualStrings("/Users/me/.devlog-index/models/nomic-ai/x-GGUF/x.gguf", path);
+    const want = try std.fs.path.join(arena.allocator(), &.{ "/Users/me", ".devlog-index", "models", "nomic-ai", "x-GGUF", "x.gguf" });
+    try testing.expectEqualStrings(want, path);
 }
