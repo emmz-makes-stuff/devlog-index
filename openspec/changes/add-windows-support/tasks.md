@@ -30,9 +30,9 @@
 
 ## 5. Installer and docs
 
-- [ ] 5.1 Write `install.ps1` (`-Version`, default latest; download zip + `SHA256SUMS`; `Get-FileHash` compare; install to `$env:LOCALAPPDATA\Programs\devlog-index`; `PATH` hint); verify it runs in PowerShell against the dry-run or a real release and installs a working `devlog-index.exe`
-- [ ] 5.2 Verify the checksum-mismatch path: point it at a tampered archive and confirm it installs nothing and exits non-zero naming both hashes
-- [ ] 5.3 Update `README.md` (Windows install, `USERPROFILE` model cache location, symlink caveat) and verify the commands in it run as written on Windows
+- [x] 5.1 Write `install.ps1` (`-Version`, default latest; download zip + `SHA256SUMS`; `Get-FileHash` compare; install to `$env:LOCALAPPDATA\Programs\devlog-index`; `PATH` hint); verify it runs under `pwsh` (macOS) against a locally served copy of the dry-run zip and installs the exact bytes of its `devlog-index.exe`; running that exe on Windows is left to 6.1
+- [x] 5.2 Verify the checksum-mismatch path: point it at a tampered archive and confirm it installs nothing and exits non-zero naming both hashes
+- [x] 5.3 Update `README.md` (Windows install, `USERPROFILE` model cache location, symlink caveat); running its commands as written on Windows is left to 6.1
 
 ## 6. Human verification on Windows
 
